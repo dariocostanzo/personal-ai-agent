@@ -1,5 +1,8 @@
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import unquote
+
+from src.agent import conversations
 
 from src.agent.ai import OllamaAIProvider
 
@@ -35,6 +38,21 @@ button {
     color: white;
 }
 header button { background: #444; }
+#conversationControls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+#conversationSelect {
+    flex: 1;
+    min-width: 180px;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 7px;
+    font: inherit;
+}
 main {
     max-width: 850px;
     margin: 25px auto;
@@ -83,6 +101,13 @@ form button { min-width: 85px; }
     <button id="newChat">New chat</button>
 </header>
 <main>
+    <div id="conversationControls">
+        <label for="conversationSelect">Saved conversations</label>
+        <select id="conversationSelect">
+            <option value="">Select a conversation</option>
+        </select>
+        <button id="loadConversation" type="button">Load</button>
+    </div>
     <div id="messages">
         <div class="message assistant">Hello. I'm your personal AI assistant. How can I help?</div>
     </div>
@@ -98,6 +123,9 @@ const messages = document.getElementById("messages");
 const promptBox = document.getElementById("prompt");
 const statusBox = document.getElementById("status");
 const sendButton = document.getElementById("send");
+const conversationSelect = document.getElementById("conversationSelect");
+const loadConversationButton = document.getElementById("loadConversation");
+const newChatButton = document.getElementById("newChat");
 
 function addMessage(text, role) {
     const div = document.createElement("div");
@@ -107,12 +135,68 @@ function addMessage(text, role) {
     messages.scrollTop = messages.scrollHeight;
 }
 
-document.getElementById("newChat").addEventListener("click", () => {
+async function refreshConversations(selectedId = "") {
+    const response = await fetch("/api/conversations");
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not load conversations");
+
+    conversationSelect.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Select a conversation";
+    conversationSelect.appendChild(placeholder);
+
+    for (const conversation of data.conversations) {
+        const option = document.createElement("option");
+        option.value = conversation.id;
+        option.textContent = conversation.label;
+        conversationSelect.appendChild(option);
+    }
+
+    conversationSelect.value = selectedId;
+}
+
+refreshConversations().catch(() => {
+    statusBox.textContent = "Could not load saved conversations";
+});
+
+newChatButton.addEventListener("click", () => {
     conversationId = null;
+    conversationSelect.value = "";
     messages.innerHTML = "";
     addMessage("New conversation started. What would you like to discuss?", "assistant");
     statusBox.textContent = "New conversation";
     promptBox.focus();
+});
+
+loadConversationButton.addEventListener("click", async () => {
+    const selectedId = conversationSelect.value;
+    if (!selectedId) return;
+
+    loadConversationButton.disabled = true;
+    sendButton.disabled = true;
+    newChatButton.disabled = true;
+    statusBox.textContent = "Loading conversation...";
+    try {
+        const response = await fetch("/api/conversations/" + encodeURIComponent(selectedId));
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not load conversation");
+
+        conversationId = data.id;
+        messages.innerHTML = "";
+        for (const message of data.history) {
+            if (message.role === "user" || message.role === "assistant") {
+                addMessage(message.content, message.role);
+            }
+        }
+        statusBox.textContent = "Conversation loaded";
+    } catch (error) {
+        statusBox.textContent = "Error: " + error.message;
+    } finally {
+        loadConversationButton.disabled = false;
+        sendButton.disabled = false;
+        newChatButton.disabled = false;
+    }
 });
 
 document.getElementById("chatForm").addEventListener("submit", async (event) => {
@@ -123,6 +207,8 @@ document.getElementById("chatForm").addEventListener("submit", async (event) => 
     addMessage(prompt, "user");
     promptBox.value = "";
     sendButton.disabled = true;
+    loadConversationButton.disabled = true;
+    newChatButton.disabled = true;
     statusBox.textContent = "Thinking...";
 
     try {
@@ -141,11 +227,14 @@ document.getElementById("chatForm").addEventListener("submit", async (event) => 
         conversationId = data.conversation_id;
         addMessage(data.response, "assistant");
         statusBox.textContent = "Ready";
+        refreshConversations(conversationId).catch(() => {});
     } catch (error) {
         addMessage("Error: " + error.message, "assistant");
         statusBox.textContent = "Something went wrong";
     } finally {
         sendButton.disabled = false;
+        loadConversationButton.disabled = false;
+        newChatButton.disabled = false;
         promptBox.focus();
     }
 });
@@ -172,7 +261,41 @@ class ChatHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path != "/":
+        path = self.path.split("?", 1)[0]
+
+        if path == "/api/conversations":
+            summaries = []
+            for conversation_id, history in conversations.load_conversations().items():
+                last_prompt = next(
+                    (
+                        message.get("content", "")
+                        for message in reversed(history)
+                        if message.get("role") == "user"
+                    ),
+                    "",
+                )
+                label = " ".join(last_prompt.split())[:60] or conversation_id
+                summaries.append({"id": conversation_id, "label": label})
+            self.send_json({"conversations": summaries})
+            return
+
+        conversation_prefix = "/api/conversations/"
+        if path.startswith(conversation_prefix):
+            encoded_id = path[len(conversation_prefix):]
+            if not encoded_id or "/" in encoded_id:
+                self.send_json({"error": "Not found"}, 404)
+                return
+
+            conversation_id = unquote(encoded_id)
+            history = conversations.get_conversation(conversation_id)
+            if not history:
+                self.send_json({"error": "Conversation not found"}, 404)
+                return
+
+            self.send_json({"id": conversation_id, "history": history})
+            return
+
+        if path != "/":
             self.send_error(404)
             return
 
