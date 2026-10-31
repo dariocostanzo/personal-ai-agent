@@ -76,9 +76,18 @@ main {
 .user { background: #e8eefc; margin-left: auto; }
 .assistant { background: #f0f1f3; margin-right: auto; }
 #status { color: #666; font-size: 13px; margin: 12px 3px; }
-form { display: flex; gap: 10px; margin-top: 15px; }
+form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    margin-top: 15px;
+    align-items: start;
+}
 textarea {
-    flex: 1;
+    grid-column: 1;
+    grid-row: 1;
+    width: 100%;
+    min-width: 0;
     resize: vertical;
     min-height: 52px;
     max-height: 180px;
@@ -87,8 +96,19 @@ textarea {
     border-radius: 8px;
     font: inherit;
 }
-form button { min-width: 85px; }
-#taskHelp { color: #666; font-size: 13px; margin: 8px 3px; }
+form button {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 85px;
+    min-height: 52px;
+}
+#taskHelp {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    color: #666;
+    font-size: 13px;
+    margin: 0 3px;
+}
 @media (max-width: 600px) {
     main { margin: 12px auto; }
     #messages { min-height: 65vh; padding: 13px; }
