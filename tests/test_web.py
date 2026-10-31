@@ -60,7 +60,9 @@ class TestWebHandler(unittest.TestCase):
 
         self.assertEqual(handler.status, 200)
         self.assertIsNone(handler.error_status)
-        self.assertIn("Personal AI Assistant", handler.wfile.getvalue().decode("utf-8"))
+        page = handler.wfile.getvalue().decode("utf-8")
+        self.assertIn("Personal AI Assistant", page)
+        self.assertIn("Try task commands: Add task: call dentist", page)
 
     def test_list_saved_conversations(self):
         conversations.save_conversation(

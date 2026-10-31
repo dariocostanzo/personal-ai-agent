@@ -86,6 +86,7 @@ def main():
 
                 print(f"Active conversation: {ai.conversation_id}")
                 print("Type 'exit' to return to the main menu.")
+                print("Try: Add task: call dentist | List my tasks | Complete task #1")
 
                 while True:
                     prompt = input("\nYou: ").strip()

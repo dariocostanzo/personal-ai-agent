@@ -88,6 +88,7 @@ textarea {
     font: inherit;
 }
 form button { min-width: 85px; }
+#taskHelp { color: #666; font-size: 13px; margin: 8px 3px; }
 @media (max-width: 600px) {
     main { margin: 12px auto; }
     #messages { min-height: 65vh; padding: 13px; }
@@ -114,6 +115,7 @@ form button { min-width: 85px; }
     <div id="status">Connected to your local assistant</div>
     <form id="chatForm">
         <textarea id="prompt" placeholder="Type your message..." required></textarea>
+        <p id="taskHelp">Try task commands: Add task: call dentist | List my tasks | Complete task #1</p>
         <button id="send" type="submit">Send</button>
     </form>
 </main>

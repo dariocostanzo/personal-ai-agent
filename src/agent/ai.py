@@ -7,7 +7,7 @@ import urllib.error
 from src.agent.conversations import save_conversation, get_conversation
 from src.agent.memory import get_memories
 from src.agent.gmail import search_messages
-
+from src.agent.tasks import add_task, complete_task, list_tasks
 
 
 def _gmail_query_from_prompt(prompt):
@@ -28,6 +28,76 @@ def _gmail_query_from_prompt(prompt):
     return None
 
 
+def _task_command_from_prompt(prompt):
+    match = re.match(
+        r"^\s*(?:please\s+)?(?:add|create)\s+(?:a\s+)?task\s*[:\-]\s*(.+?)\s*$",
+        prompt, flags=re.IGNORECASE,
+    )
+    if match:
+        task_text = match.group(1).strip()
+        due_match = re.match(r"^(.*?)\s*\|\s*due\s+(\S+)\s*$", task_text, re.I)
+        if due_match:
+            return ("add", due_match.group(1).strip(), due_match.group(2))
+        return ("add", task_text, None)
+
+    match = re.match(
+        r"^\s*(?:please\s+)?remind\s+me\s+to\s+(.+?)\s*[?.!]*\s*$",
+        prompt, flags=re.IGNORECASE,
+    )
+    if match:
+        return ("remind", match.group(1).strip(), None)
+
+    if re.match(
+        r"^\s*(?:please\s+)?(?:show|list)(?:\s+me)?\s+(?:my\s+)?tasks\s*[?.!]*\s*$",
+        prompt, flags=re.IGNORECASE,
+    ) or re.match(
+        r"^\s*what\s+(?:are\s+)?(?:my\s+)?tasks\s*[?.!]*\s*$",
+        prompt, flags=re.IGNORECASE,
+    ):
+        return ("list",)
+
+    match = re.match(
+        r"^\s*(?:please\s+)?(?:complete|finish|mark\s+done)\s+"
+        r"(?:task\s*)?#?(\d+)\s*[?.!]*\s*$",
+        prompt, flags=re.IGNORECASE,
+    )
+    if match:
+        return ("complete", int(match.group(1)))
+    return None
+
+
+def _run_task_command(command):
+    if command[0] in ("add", "remind"):
+        _, title, due_date = command
+        try:
+            task_id = add_task(title, due_date)
+        except ValueError as error:
+            return str(error)
+        answer = f"Added task #{task_id}: {title}"
+        if due_date:
+            answer += f" (due {due_date})"
+        if command[0] == "remind":
+            return answer + ". I saved it to your task list, but I cannot send notifications yet."
+        return answer + ". You can ask me to list tasks or complete this task."
+
+    if command[0] == "list":
+        tasks = list_tasks()
+        if not tasks:
+            return "You have no open tasks."
+        lines = ["Your open tasks:"]
+        for task in tasks:
+            due = f" — due {task['due_date']}" if task["due_date"] else ""
+            lines.append(f"#{task['id']}: {task['title']}{due}")
+        return "\n".join(lines)
+
+    if command[0] == "complete":
+        task_id = command[1]
+        if complete_task(task_id):
+            return f"Marked task #{task_id} complete. It remains saved in your task history."
+        return f"I couldn't find open task #{task_id}."
+    return None
+
+
 class AIProvider:
     def generate_response(self, prompt):
         raise NotImplementedError
@@ -41,6 +111,16 @@ class OllamaAIProvider(AIProvider):
         self.api_url = "http://localhost:11434/api/chat"
 
     def generate_response(self, prompt):
+        task_command = _task_command_from_prompt(prompt)
+        if task_command is not None:
+            answer = _run_task_command(task_command)
+            self.conversation_history.extend([
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": answer},
+            ])
+            save_conversation(self.conversation_id, self.conversation_history)
+            return answer
+
         gmail_query = _gmail_query_from_prompt(prompt)
         gmail_context = None
         if gmail_query is not None:

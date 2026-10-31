@@ -18,6 +18,7 @@ Google may show an unverified-app warning. Proceed only if you created the
 Google Cloud project and OAuth client yourself.
 
 Chat examples:
+
 - Search my Gmail for from:alice@example.com newer_than:30d
 - Search my Gmail for subject:invoice
 - Check my unread emails
