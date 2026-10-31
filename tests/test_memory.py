@@ -4,6 +4,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.agent import memory
+from src.agent.ai import (
+    OllamaAIProvider,
+    _memory_command_from_prompt,
+    _run_memory_command,
+)
 
 
 class TestMemory(unittest.TestCase):
@@ -37,6 +42,34 @@ class TestMemory(unittest.TestCase):
         memory_id = memory.save_memory("Delete me")
         self.assertTrue(memory.delete_memory(memory_id))
         self.assertEqual(memory.get_memories(), [])
+
+    def test_explicit_chat_commands_save_and_search_memories(self):
+        self.assertEqual(
+            _memory_command_from_prompt("Remember that I prefer decaf coffee."),
+            ("save", "I prefer decaf coffee"),
+        )
+        self.assertEqual(
+            _memory_command_from_prompt("What do you remember about coffee?"),
+            ("search", "coffee"),
+        )
+        self.assertIsNone(_memory_command_from_prompt("I remember the coffee shop"))
+
+        answer = _run_memory_command(("save", "I prefer decaf coffee"))
+        self.assertIn("I'll remember that", answer)
+        result = _run_memory_command(("search", "coffee"))
+        self.assertIn("I prefer decaf coffee", result)
+
+    def test_chat_memory_command_does_not_call_ollama(self):
+        with patch("src.agent.ai.get_conversation", return_value=[]), \
+             patch("src.agent.ai.save_memory", return_value=12), \
+             patch("src.agent.ai.save_conversation") as save, \
+             patch("src.agent.ai.urllib.request.urlopen") as ollama:
+            agent = OllamaAIProvider()
+            answer = agent.generate_response("Remember that I prefer decaf")
+
+        self.assertIn("memory #12", answer)
+        ollama.assert_not_called()
+        save.assert_called_once()
 
 
 if __name__ == "__main__":

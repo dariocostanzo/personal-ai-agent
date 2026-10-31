@@ -115,7 +115,7 @@ form button { min-width: 85px; }
     <div id="status">Connected to your local assistant</div>
     <form id="chatForm">
         <textarea id="prompt" placeholder="Type your message..." required></textarea>
-        <p id="taskHelp">Try task commands: Add task: call dentist | List my tasks | Complete task #1</p>
+        <p id="taskHelp">Try: Remember that I prefer decaf | Find memories for coffee | Find documents about the fridge warranty | What should I do today?</p>
         <button id="send" type="submit">Send</button>
     </form>
 </main>

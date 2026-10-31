@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from datetime import date
 
 from src.agent import tasks
 from src.agent.ai import (
@@ -47,6 +48,38 @@ class TaskStorageTests(unittest.TestCase):
     def test_missing_task_is_not_completed(self):
         self.assertFalse(tasks.complete_task(999))
 
+    def test_search_is_case_insensitive_and_treats_wildcards_literally(self):
+        tasks.add_task("Pay rent")
+        tasks.add_task("Pay 100% of bill")
+        self.assertEqual([t["title"] for t in tasks.search_tasks("RENT")], ["Pay rent"])
+        self.assertEqual([t["title"] for t in tasks.search_tasks("100%")], ["Pay 100% of bill"])
+
+    def test_update_task_can_rename_reschedule_and_clear_due_date(self):
+        task_id = tasks.add_task("Call dentist", "2026-11-05")
+        self.assertTrue(tasks.update_task(task_id, title="Book dentist", due_date="2026-11-06"))
+        item = tasks.list_tasks()[0]
+        self.assertEqual((item["title"], item["due_date"]), ("Book dentist", "2026-11-06"))
+        self.assertTrue(tasks.update_task(task_id, clear_due_date=True))
+        self.assertIsNone(tasks.list_tasks()[0]["due_date"])
+
+    def test_update_rejects_invalid_dates_and_completed_tasks(self):
+        task_id = tasks.add_task("Call dentist")
+        with self.assertRaises(ValueError):
+            tasks.update_task(task_id, due_date="2026-02-30")
+        tasks.complete_task(task_id)
+        self.assertFalse(tasks.update_task(task_id, title="Done"))
+
+    def test_overview_groups_tasks_by_due_date(self):
+        tasks.add_task("Late", "2026-11-04")
+        tasks.add_task("Today", "2026-11-05")
+        tasks.add_task("Soon", "2026-11-10")
+        tasks.add_task("Later", "2026-11-20")
+        tasks.add_task("No date")
+        overview = tasks.task_overview(date(2026, 11, 5))
+        self.assertEqual([t["title"] for t in overview["overdue"]], ["Late"])
+        self.assertEqual([t["title"] for t in overview["today"]], ["Today"])
+        self.assertEqual([t["title"] for t in overview["upcoming"]], ["Soon"])
+
 
 class TaskCommandTests(unittest.TestCase):
     def test_only_clear_task_commands_match(self):
@@ -61,6 +94,24 @@ class TaskCommandTests(unittest.TestCase):
         self.assertEqual(_task_command_from_prompt("List my tasks"), ("list",))
         self.assertEqual(
             _task_command_from_prompt("Complete task #4"), ("complete", 4)
+        )
+        self.assertEqual(
+            _task_command_from_prompt("What should I do today?"), ("overview",)
+        )
+        self.assertEqual(
+            _task_command_from_prompt("Find tasks for rent"), ("search", "rent")
+        )
+        self.assertEqual(
+            _task_command_from_prompt("Reschedule task #4 to 2026-11-12"),
+            ("reschedule", 4, "2026-11-12"),
+        )
+        self.assertEqual(
+            _task_command_from_prompt("Rename task #4 to Pay the water bill"),
+            ("rename", 4, "Pay the water bill"),
+        )
+        self.assertEqual(
+            _task_command_from_prompt("Clear due date for task #4"),
+            ("clear_due", 4),
         )
         self.assertIsNone(_task_command_from_prompt("Tell me about tasks in Python"))
 
