@@ -5,3 +5,6 @@ __pycache__/
 logs/*
 data/*
 !data/.gitkeep
+
+# Local backups
+*.tar.gz
