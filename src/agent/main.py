@@ -6,7 +6,7 @@ from src.agent.memory import (
     update_memory,
     delete_memory,
 )
-from src.agent.ai import MockAIProvider
+from src.agent.ai import OllamaAIProvider
 from src.agent.conversations import list_conversations, delete_conversation
 
 def get_memory_id():
@@ -82,7 +82,7 @@ def main():
                     "\nConversation ID (Enter for new conversation): "
                 ).strip()
 
-                ai = MockAIProvider(conversation_id or None)
+                ai = OllamaAIProvider(conversation_id or None)
 
                 print(f"Active conversation: {ai.conversation_id}")
                 print("Type 'exit' to return to the main menu.")
