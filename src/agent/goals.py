@@ -59,6 +59,18 @@ def list_goals(include_completed=True):
         connection.close()
 
 
+def get_goal(goal_id):
+    connection = _connect()
+    try:
+        row = connection.execute(
+            "SELECT id, title, details, status, created_at FROM goals WHERE id = ?",
+            (goal_id,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        connection.close()
+
+
 def set_goal_status(goal_id, status):
     if status not in ("active", "completed"):
         raise ValueError("Goal status must be active or completed.")

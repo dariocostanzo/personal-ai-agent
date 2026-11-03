@@ -3,15 +3,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from src.agent import conversations, goals, memory, tasks
+from src.agent import conversations, goals, memory, recommendations, sessions, tasks
 
-from src.agent.ai import OllamaAIProvider
+from src.agent.ai import OllamaAIProvider, get_ollama_status
 
 HTML = Path(__file__).with_name("dashboard.html").read_text(encoding="utf-8")
 
 
 def _conversation_summaries():
     summaries = []
+    metadata_by_id = sessions.list_session_metadata()
+    goals_by_id = {goal["id"]: goal for goal in goals.list_goals()}
     for conversation_id, history in conversations.load_conversations().items():
         last_prompt = next(
             (
@@ -22,7 +24,15 @@ def _conversation_summaries():
             "",
         )
         label = " ".join(last_prompt.split())[:60] or conversation_id
-        summaries.append({"id": conversation_id, "label": label})
+        metadata = metadata_by_id.get(conversation_id, {})
+        goal = goals_by_id.get(metadata.get("goal_id"))
+        summaries.append({
+            "id": conversation_id,
+            "label": label,
+            "goal_id": metadata.get("goal_id"),
+            "goal_title": goal["title"] if goal else None,
+            "needs_attention": bool(metadata.get("needs_attention", 0)),
+        })
     return summaries
 
 
@@ -55,6 +65,7 @@ class ChatHandler(BaseHTTPRequestHandler):
                 "task_overview": tasks.task_overview(),
                 "tasks": tasks.list_tasks(include_completed=True),
                 "goals": goals.list_goals(),
+                "recommendations": recommendations.list_recommendations(),
                 "memories": [dict(zip(("id", "content", "created_at"), row))
                              for row in memory.get_memories()],
             })
@@ -62,6 +73,14 @@ class ChatHandler(BaseHTTPRequestHandler):
 
         if path == "/api/tasks":
             self.send_json({"tasks": tasks.list_tasks(include_completed=True)})
+            return
+
+        if path == "/api/ollama/status":
+            self.send_json(get_ollama_status())
+            return
+
+        if path == "/api/recommendations":
+            self.send_json({"recommendations": recommendations.list_recommendations()})
             return
 
         if path == "/api/goals":
@@ -93,7 +112,14 @@ class ChatHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Conversation not found"}, 404)
                 return
 
-            self.send_json({"id": conversation_id, "history": history})
+            self.send_json({
+                "id": conversation_id,
+                "history": history,
+                "metadata": sessions.list_session_metadata().get(
+                    conversation_id,
+                    {"goal_id": None, "needs_attention": False},
+                ),
+            })
             return
 
         if path != "/":
@@ -109,10 +135,15 @@ class ChatHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
-        if path not in ("/api/chat", "/api/goals", "/api/tasks", "/api/memories") and not (
+        if path not in (
+            "/api/chat", "/api/goals", "/api/tasks", "/api/memories",
+            "/api/recommendations",
+        ) and not (
             path.startswith("/api/goals/")
             or path.startswith("/api/tasks/")
             or path.startswith("/api/memories/")
+            or path.startswith("/api/recommendations/")
+            or path.startswith("/api/conversations/")
         ):
             self.send_json({"error": "Not found"}, 404)
             return
@@ -139,14 +170,30 @@ class ChatHandler(BaseHTTPRequestHandler):
                     return
 
                 if path == "/api/tasks":
-                    task_id = tasks.add_task(data.get("title"), data.get("due_date"))
+                    task_id = tasks.add_task(
+                        data.get("title"), data.get("due_date"), data.get("goal_id") or None
+                    )
                     task = next(task for task in tasks.list_tasks(True) if task["id"] == task_id)
                     self.send_json({"task": task}, 201)
                     return
 
                 if path.startswith("/api/tasks/"):
                     parts = path.strip("/").split("/")
-                    if len(parts) != 4 or parts[3] != "complete":
+                    if len(parts) != 4:
+                        self.send_json({"error": "Not found"}, 404)
+                        return
+                    if parts[3] == "update":
+                        changed = tasks.update_task(
+                            int(parts[2]),
+                            goal_id=data.get("goal_id") or None,
+                            clear_goal=bool(data.get("clear_goal", False)),
+                        )
+                        if not changed:
+                            self.send_json({"error": "Open task not found"}, 404)
+                            return
+                        self.send_json({"ok": True})
+                        return
+                    if parts[3] != "complete":
                         self.send_json({"error": "Not found"}, 404)
                         return
                     if not tasks.complete_task(int(parts[2])):
@@ -176,6 +223,51 @@ class ChatHandler(BaseHTTPRequestHandler):
                         return
                     self.send_json({"ok": True})
                     return
+
+                if path == "/api/recommendations":
+                    recommendation_id = recommendations.add_recommendation(
+                        data.get("title"), data.get("rationale", ""), data.get("evidence", "")
+                    )
+                    item = next(
+                        item for item in recommendations.list_recommendations()
+                        if item["id"] == recommendation_id
+                    )
+                    self.send_json({"recommendation": item}, 201)
+                    return
+
+                if path.startswith("/api/recommendations/"):
+                    parts = path.strip("/").split("/")
+                    if len(parts) != 4 or parts[3] != "decision":
+                        self.send_json({"error": "Not found"}, 404)
+                        return
+                    if not recommendations.decide_recommendation(
+                        int(parts[2]), data.get("decision")
+                    ):
+                        self.send_json({"error": "Pending recommendation not found"}, 404)
+                        return
+                    self.send_json({"ok": True})
+                    return
+
+                if path.startswith("/api/conversations/"):
+                    parts = path.strip("/").split("/")
+                    if len(parts) != 4 or parts[3] not in ("metadata", "attention"):
+                        self.send_json({"error": "Not found"}, 404)
+                        return
+                    conversation_id = unquote(parts[2])
+                    if not conversations.get_conversation(conversation_id):
+                        self.send_json({"error": "Conversation not found"}, 404)
+                        return
+                    if parts[3] == "metadata":
+                        if "goal_id" in data:
+                            sessions.set_session_goal(conversation_id, data["goal_id"] or None)
+                        if "needs_attention" in data:
+                            sessions.set_needs_attention(conversation_id, data["needs_attention"])
+                    else:
+                        sessions.set_needs_attention(
+                            conversation_id, data.get("needs_attention")
+                        )
+                    self.send_json({"ok": True})
+                    return
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 self.send_json({"error": str(error)}, 400)
                 return
@@ -193,11 +285,16 @@ class ChatHandler(BaseHTTPRequestHandler):
                 return
 
             ai = OllamaAIProvider(conversation_id)
+            if "goal_id" in data:
+                sessions.set_session_goal(ai.conversation_id, data["goal_id"] or None)
+            if "needs_attention" in data:
+                sessions.set_needs_attention(ai.conversation_id, data["needs_attention"])
             answer = ai.generate_response(prompt)
 
             self.send_json({
                 "response": answer,
-                "conversation_id": ai.conversation_id
+                "conversation_id": ai.conversation_id,
+                "goal_id": data.get("goal_id"),
             })
 
         except Exception as error:

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.agent import conversations, goals, memory, tasks
+from src.agent import conversations, goals, memory, recommendations, sessions, tasks
 from src.agent.web import ChatHandler
 
 
@@ -51,7 +51,7 @@ class TestWebHandler(unittest.TestCase):
         )
         patcher.start()
         self.addCleanup(patcher.stop)
-        for module in (goals, memory, tasks):
+        for module in (goals, memory, recommendations, sessions, tasks):
             patcher = patch.object(module, "DB_PATH", Path(temp_dir.name) / f"{module.__name__}.db")
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -104,9 +104,23 @@ class TestWebHandler(unittest.TestCase):
         self.assertEqual(status_response.status, 200)
         self.assertEqual(goals.list_goals()[0]["status"], "completed")
 
-        task_response = self.post("/api/tasks", {"title": "Water the plants", "due_date": None})
+        active_goal_id = goals.add_goal("Keep the kitchen tidy")
+        task_response = self.post("/api/tasks", {
+            "title": "Water the plants", "due_date": None, "goal_id": active_goal_id,
+        })
         task = json.loads(task_response.wfile.getvalue().decode("utf-8"))["task"]
         self.assertEqual(task_response.status, 201)
+        self.assertEqual(task["goal_id"], active_goal_id)
+        update_response = self.post(f"/api/tasks/{task['id']}/update", {
+            "goal_id": None,
+            "clear_goal": True,
+        })
+        self.assertEqual(update_response.status, 200)
+        self.assertIsNone(tasks.list_tasks()[0]["goal_id"])
+        update_response = self.post(f"/api/tasks/{task['id']}/update", {
+            "goal_id": active_goal_id,
+        })
+        self.assertEqual(update_response.status, 200)
         complete_response = self.post(f"/api/tasks/{task['id']}/complete", {})
         self.assertEqual(complete_response.status, 200)
         self.assertEqual(tasks.list_tasks(include_completed=True)[0]["status"], "completed")
@@ -117,6 +131,68 @@ class TestWebHandler(unittest.TestCase):
         delete_response = self.post(f"/api/memories/{saved['id']}/delete", {})
         self.assertEqual(delete_response.status, 200)
         self.assertEqual(memory.get_memories(), [])
+
+        conversations.save_conversation("chat-meta", [
+            {"role": "user", "content": "Plan the week"},
+            {"role": "assistant", "content": "Let's start with your schedule."},
+        ])
+        metadata_response = self.post("/api/conversations/chat-meta/metadata", {
+            "goal_id": active_goal_id,
+            "needs_attention": True,
+        })
+        self.assertEqual(metadata_response.status, 200)
+        summary = self.get("/api/conversations").wfile.getvalue().decode("utf-8")
+        self.assertIn("Keep the kitchen tidy", summary)
+        self.assertIn('"needs_attention": true', summary)
+
+        recommendation_response = self.post("/api/recommendations", {
+            "title": "Review the weekly plan",
+            "rationale": "Several tasks share the same deadline.",
+            "evidence": "Three tasks due Friday",
+        })
+        recommendation = json.loads(
+            recommendation_response.wfile.getvalue().decode("utf-8")
+        )["recommendation"]
+        self.assertEqual(recommendation_response.status, 201)
+        decision_response = self.post(
+            f"/api/recommendations/{recommendation['id']}/decision",
+            {"decision": "accepted"},
+        )
+        self.assertEqual(decision_response.status, 200)
+        self.assertEqual(recommendations.list_recommendations()[0]["status"], "accepted")
+
+    def test_ollama_status_route_reports_connection(self):
+        with patch("src.agent.web.get_ollama_status", return_value={
+            "connected": True,
+            "model": "qwen3:1.7b",
+            "model_available": True,
+            "models": ["qwen3:1.7b"],
+        }):
+            handler = self.get("/api/ollama/status")
+
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(payload["model"], "qwen3:1.7b")
+        self.assertTrue(payload["model_available"])
+
+    def test_chat_saves_selected_goal_and_attention_state(self):
+        goal_id = goals.add_goal("Make time to read")
+        with patch("src.agent.web.OllamaAIProvider") as provider_class:
+            provider = provider_class.return_value
+            provider.conversation_id = "chat-linked"
+            provider.generate_response.return_value = "Start with ten pages."
+            handler = self.post("/api/chat", {
+                "prompt": "Help me get started",
+                "conversation_id": None,
+                "goal_id": goal_id,
+                "needs_attention": True,
+            })
+
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        metadata = sessions.list_session_metadata()["chat-linked"]
+        self.assertEqual(handler.status, 200)
+        self.assertEqual(payload["goal_id"], goal_id)
+        self.assertEqual(metadata["goal_id"], goal_id)
+        self.assertEqual(metadata["needs_attention"], 1)
 
     def test_list_saved_conversations(self):
         conversations.save_conversation(
@@ -133,7 +209,13 @@ class TestWebHandler(unittest.TestCase):
         self.assertEqual(handler.status, 200)
         self.assertEqual(
             payload["conversations"],
-            [{"id": "chat-1", "label": "Help with my personal agent"}],
+            [{
+                "id": "chat-1",
+                "label": "Help with my personal agent",
+                "goal_id": None,
+                "goal_title": None,
+                "needs_attention": False,
+            }],
         )
 
     def test_load_saved_conversation(self):
@@ -147,7 +229,11 @@ class TestWebHandler(unittest.TestCase):
         payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
 
         self.assertEqual(handler.status, 200)
-        self.assertEqual(payload, {"id": "chat one", "history": history})
+        self.assertEqual(payload, {
+            "id": "chat one",
+            "history": history,
+            "metadata": {"goal_id": None, "needs_attention": False},
+        })
 
     def test_missing_conversation_returns_404(self):
         handler = self.get("/api/conversations/missing-chat")

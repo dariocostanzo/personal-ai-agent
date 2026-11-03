@@ -17,16 +17,36 @@ def _connect():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             due_date TEXT,
+            goal_id INTEGER,
             status TEXT NOT NULL DEFAULT 'open'
                 CHECK (status IN ('open', 'completed')),
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             completed_at TEXT
         )
     """)
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(tasks)")}
+    if "goal_id" not in columns:
+        connection.execute("ALTER TABLE tasks ADD COLUMN goal_id INTEGER")
     return connection
 
 
-def add_task(title, due_date=None):
+def _validate_goal_id(goal_id):
+    if goal_id is None:
+        return None
+    if isinstance(goal_id, bool) or not isinstance(goal_id, (int, str)):
+        raise ValueError("Goal ID must be a whole number.")
+    try:
+        goal_id = int(goal_id)
+    except ValueError as error:
+        raise ValueError("Goal ID must be a whole number.") from error
+    from src.agent.goals import get_goal
+    goal = get_goal(goal_id)
+    if not goal or goal["status"] != "active":
+        raise ValueError("Choose an active goal.")
+    return goal_id
+
+
+def add_task(title, due_date=None, goal_id=None):
     title = title.strip() if isinstance(title, str) else ""
     if not title:
         raise ValueError("Task title cannot be empty.")
@@ -39,12 +59,13 @@ def add_task(title, due_date=None):
             due_date = date.fromisoformat(due_date).isoformat()
         except (TypeError, ValueError) as error:
             raise ValueError("Due date must use YYYY-MM-DD format.") from error
+    goal_id = _validate_goal_id(goal_id)
 
     connection = _connect()
     try:
         cursor = connection.execute(
-            "INSERT INTO tasks (title, due_date) VALUES (?, ?)",
-            (title, due_date),
+            "INSERT INTO tasks (title, due_date, goal_id) VALUES (?, ?, ?)",
+            (title, due_date, goal_id),
         )
         connection.commit()
         return cursor.lastrowid
@@ -57,12 +78,12 @@ def list_tasks(include_completed=False):
     try:
         if include_completed:
             rows = connection.execute(
-                "SELECT id, title, due_date, status, created_at, completed_at "
+                "SELECT id, title, due_date, goal_id, status, created_at, completed_at "
                 "FROM tasks ORDER BY status, due_date IS NULL, due_date, id"
             ).fetchall()
         else:
             rows = connection.execute(
-                "SELECT id, title, due_date, status, created_at, completed_at "
+                "SELECT id, title, due_date, goal_id, status, created_at, completed_at "
                 "FROM tasks WHERE status = 'open' "
                 "ORDER BY due_date IS NULL, due_date, id"
             ).fetchall()
@@ -80,7 +101,7 @@ def search_tasks(query, include_completed=False):
     try:
         status_filter = "" if include_completed else "AND status = 'open'"
         rows = connection.execute(
-            "SELECT id, title, due_date, status, created_at, completed_at "
+            "SELECT id, title, due_date, goal_id, status, created_at, completed_at "
             "FROM tasks WHERE title LIKE ? ESCAPE '\\' " + status_filter +
             " ORDER BY due_date IS NULL, due_date, id",
             (f"%{escaped}%",),
@@ -90,8 +111,9 @@ def search_tasks(query, include_completed=False):
         connection.close()
 
 
-def update_task(task_id, title=None, due_date=None, clear_due_date=False):
-    """Update an open task. None leaves a field unchanged; clear_due_date clears it."""
+def update_task(task_id, title=None, due_date=None, clear_due_date=False,
+                goal_id=None, clear_goal=False):
+    """Update an open task. None leaves a field unchanged; clear flags clear fields."""
     if title is not None:
         title = title.strip() if isinstance(title, str) else ""
         if not title:
@@ -107,7 +129,11 @@ def update_task(task_id, title=None, due_date=None, clear_due_date=False):
             raise ValueError("Due date must use YYYY-MM-DD format.") from error
     if clear_due_date and due_date is not None:
         raise ValueError("Choose a due date or clear the due date, not both.")
-    if title is None and due_date is None and not clear_due_date:
+    if clear_goal and goal_id is not None:
+        raise ValueError("Choose a goal or clear the goal, not both.")
+    if goal_id is not None:
+        goal_id = _validate_goal_id(goal_id)
+    if title is None and due_date is None and not clear_due_date and goal_id is None and not clear_goal:
         raise ValueError("Provide a new title or due date.")
 
     assignments = []
@@ -118,6 +144,9 @@ def update_task(task_id, title=None, due_date=None, clear_due_date=False):
     if due_date is not None or clear_due_date:
         assignments.append("due_date = ?")
         values.append(None if clear_due_date else due_date)
+    if goal_id is not None or clear_goal:
+        assignments.append("goal_id = ?")
+        values.append(None if clear_goal else goal_id)
     values.append(task_id)
 
     connection = _connect()

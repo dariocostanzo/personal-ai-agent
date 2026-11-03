@@ -1,4 +1,5 @@
 import tempfile
+import sqlite3
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -27,6 +28,38 @@ class TaskStorageTests(unittest.TestCase):
         self.assertEqual(item["title"], "Pay rent")
         self.assertEqual(item["due_date"], "2026-11-05")
         self.assertEqual(item["status"], "open")
+        self.assertIsNone(item["goal_id"])
+
+    def test_tasks_can_be_linked_to_active_goals(self):
+        from src.agent import goals
+        with patch.object(goals, "DB_PATH", Path(tasks.DB_PATH.parent) / "goals.db"):
+            goal_id = goals.add_goal("Build a routine")
+            task_id = tasks.add_task("Walk every day", goal_id=goal_id)
+            self.assertEqual(tasks.list_tasks()[0]["id"], task_id)
+            self.assertEqual(tasks.list_tasks()[0]["goal_id"], goal_id)
+            goals.set_goal_status(goal_id, "completed")
+            with self.assertRaises(ValueError):
+                tasks.add_task("Another walk", goal_id=goal_id)
+
+    def test_existing_task_database_gets_goal_column(self):
+        connection = sqlite3.connect(tasks.DB_PATH)
+        connection.execute("""
+            CREATE TABLE tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                due_date TEXT,
+                status TEXT NOT NULL DEFAULT 'open',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                completed_at TEXT
+            )
+        """)
+        connection.commit()
+        connection.close()
+
+        migrated = tasks._connect()
+        columns = {row[1] for row in migrated.execute("PRAGMA table_info(tasks)")}
+        migrated.close()
+        self.assertIn("goal_id", columns)
 
     def test_invalid_tasks_are_rejected(self):
         with self.assertRaises(ValueError):
@@ -61,6 +94,18 @@ class TaskStorageTests(unittest.TestCase):
         self.assertEqual((item["title"], item["due_date"]), ("Book dentist", "2026-11-06"))
         self.assertTrue(tasks.update_task(task_id, clear_due_date=True))
         self.assertIsNone(tasks.list_tasks()[0]["due_date"])
+
+    def test_update_task_can_clear_and_reassign_goal(self):
+        from src.agent import goals
+        with patch.object(goals, "DB_PATH", Path(tasks.DB_PATH.parent) / "goals.db"):
+            first_goal = goals.add_goal("Build a routine")
+            second_goal = goals.add_goal("Read more")
+            task_id = tasks.add_task("Walk", goal_id=first_goal)
+
+            self.assertTrue(tasks.update_task(task_id, clear_goal=True))
+            self.assertIsNone(tasks.list_tasks()[0]["goal_id"])
+            self.assertTrue(tasks.update_task(task_id, goal_id=second_goal))
+            self.assertEqual(tasks.list_tasks()[0]["goal_id"], second_goal)
 
     def test_update_rejects_invalid_dates_and_completed_tasks(self):
         task_id = tasks.add_task("Call dentist")
