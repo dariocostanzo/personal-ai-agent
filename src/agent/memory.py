@@ -34,10 +34,11 @@ def get_memories():
 
 
 def search_memories(query):
+    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     with get_connection() as connection:
         return connection.execute(
-            "SELECT id, content, created_at FROM memories WHERE content LIKE ? ORDER BY id",
-            (f"%{query}%",)
+            "SELECT id, content, created_at FROM memories WHERE content LIKE ? ESCAPE '\\' ORDER BY id",
+            (f"%{escaped}%",)
         ).fetchall()
 
 

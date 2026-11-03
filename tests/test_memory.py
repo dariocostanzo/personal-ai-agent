@@ -33,6 +33,17 @@ class TestMemory(unittest.TestCase):
         results = memory.search_memories("Python")
         self.assertEqual(len(results), 1)
 
+    def test_search_treats_like_wildcards_as_literals(self):
+        memory.save_memory("100% complete")
+        memory.save_memory("100 units complete")
+        memory.save_memory("a_c")
+        memory.save_memory("abc")
+        memory.save_memory(r"folder\name")
+
+        self.assertEqual([row[1] for row in memory.search_memories("100%")], ["100% complete"])
+        self.assertEqual([row[1] for row in memory.search_memories("a_c")], ["a_c"])
+        self.assertEqual([row[1] for row in memory.search_memories("\\")], [r"folder\name"])
+
     def test_update(self):
         memory_id = memory.save_memory("Old text")
         self.assertTrue(memory.update_memory(memory_id, "New text"))
