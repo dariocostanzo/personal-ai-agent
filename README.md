@@ -34,6 +34,16 @@ When finished, select `0` to exit the agent, then run:
 deactivate
 ```
 
+## Local web hub
+
+Start the browser dashboard from the project directory with the virtual environment active:
+
+```bash
+python -m src.agent.web
+```
+
+Open <http://localhost:8000>. The server binds to localhost and shows your sessions, tasks, memories, and goals in one place. The dashboard can add and complete tasks, save and search memories, and track active or completed goals.
+
 ## Features
 
 The current menu provides:
@@ -85,7 +95,9 @@ personal-agent/
 │   └── agent/
 │       ├── main.py           # Application entry point and menu
 │       ├── ai.py             # Ollama chat and explicit tool routing
+│       ├── dashboard.html    # Local browser hub
 │       ├── memory.py         # Persistent memory management
+│       ├── goals.py          # Personal goal tracking
 │       ├── tasks.py          # Local task tracking
 │       ├── gmail.py          # Read-only Gmail search
 │       ├── web.py            # Browser chat server
@@ -95,6 +107,7 @@ personal-agent/
 │
 ├── data/
 │   ├── tasks.db              # Local task list
+│   ├── goals.db              # Personal goals
 │   ├── memory.db             # SQLite memory database
 │   ├── conversations.json   # Saved chat histories
 │   └── .gitkeep
@@ -115,19 +128,23 @@ personal-agent/
 - **memory.py** stores and manages persistent memories in SQLite.
 - **conversations.py** stores separate chat histories in JSON, identified by unique IDs.
 - **tasks.py** stores tasks in a separate local SQLite database. Completed tasks stay in history.
+- **goals.py** stores personal goals and their active or completed status in SQLite.
+- **web.py** serves the local dashboard and its JSON endpoints; **dashboard.html** provides the browser interface.
 - **documents.py** searches only supported small text files in the configured documents folder.
 - **config.py** loads environment variables from `.env`.
 - **logger.py** handles application logging.
 
 ## Data and privacy
 
-Memories, conversations, tasks and Gmail OAuth files are stored locally in the project data directory, which is excluded from Git.
+Memories, conversations, tasks, goals and Gmail OAuth files are stored locally in the project data directory, which is excluded from Git.
 
 The `.env` file may contain secrets and must never be committed to Git. Personal databases and conversation histories should also remain outside the repository.
 
 ## Current status
 
 - General chat uses local Ollama.
+- The local browser hub brings sessions, tasks, memories, and goals together in a responsive dashboard.
+- Goals can be created, completed, and reopened from the browser hub.
 - Explicit chat commands can add, list and complete tasks locally.
 - Task commands can search, rename, reschedule, clear due dates, and summarize overdue, due-today, and upcoming work.
 - Explicit chat commands can save and search memories without calling Ollama; updating and deleting memories remains available in the menu.

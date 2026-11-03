@@ -1,276 +1,39 @@
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote
+from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlsplit
 
-from src.agent import conversations
+from src.agent import conversations, goals, memory, tasks
 
 from src.agent.ai import OllamaAIProvider
 
-HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Personal AI Assistant</title>
-<style>
-* { box-sizing: border-box; }
-body {
-    margin: 0;
-    font-family: Arial, sans-serif;
-    background: #f4f5f7;
-    color: #202124;
-}
-header {
-    background: #202124;
-    color: white;
-    padding: 18px 22px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-h1 { font-size: 19px; margin: 0; }
-button {
-    border: 0;
-    border-radius: 7px;
-    padding: 11px 16px;
-    cursor: pointer;
-    background: #202124;
-    color: white;
-}
-header button { background: #444; }
-#conversationControls {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
-}
-#conversationSelect {
-    flex: 1;
-    min-width: 180px;
-    padding: 10px;
-    border: 1px solid #ccc;
-    border-radius: 7px;
-    font: inherit;
-}
-main {
-    max-width: 850px;
-    margin: 25px auto;
-    padding: 0 15px;
-}
-#messages {
-    background: white;
-    border-radius: 10px;
-    min-height: 60vh;
-    padding: 20px;
-    box-shadow: 0 2px 8px #0000000c;
-}
-.message {
-    white-space: pre-wrap;
-    line-height: 1.55;
-    margin: 12px 0 20px;
-    padding: 13px 15px;
-    border-radius: 9px;
-    max-width: 90%;
-}
-.user { background: #e8eefc; margin-left: auto; }
-.assistant { background: #f0f1f3; margin-right: auto; }
-#status { color: #666; font-size: 13px; margin: 12px 3px; }
-form {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 10px;
-    margin-top: 15px;
-    align-items: start;
-}
-textarea {
-    grid-column: 1;
-    grid-row: 1;
-    width: 100%;
-    min-width: 0;
-    resize: vertical;
-    min-height: 52px;
-    max-height: 180px;
-    padding: 14px;
-    border: 1px solid #ccc;
-    border-radius: 8px;
-    font: inherit;
-}
-form button {
-    grid-column: 2;
-    grid-row: 1;
-    min-width: 85px;
-    min-height: 52px;
-}
-#taskHelp {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    color: #666;
-    font-size: 13px;
-    margin: 0 3px;
-}
-@media (max-width: 600px) {
-    main { margin: 12px auto; }
-    #messages { min-height: 65vh; padding: 13px; }
-    .message { max-width: 100%; }
-}
-</style>
-</head>
-<body>
-<header>
-    <h1>Personal AI Assistant</h1>
-    <button id="newChat">New chat</button>
-</header>
-<main>
-    <div id="conversationControls">
-        <label for="conversationSelect">Saved conversations</label>
-        <select id="conversationSelect">
-            <option value="">Select a conversation</option>
-        </select>
-        <button id="loadConversation" type="button">Load</button>
-    </div>
-    <div id="messages">
-        <div class="message assistant">Hello. I'm your personal AI assistant. How can I help?</div>
-    </div>
-    <div id="status">Connected to your local assistant</div>
-    <form id="chatForm">
-        <textarea id="prompt" placeholder="Type your message..." required></textarea>
-        <p id="taskHelp">Try: Remember that I prefer decaf | Find memories for coffee | Find documents about the fridge warranty | What should I do today?</p>
-        <button id="send" type="submit">Send</button>
-    </form>
-</main>
-<script>
-let conversationId = null;
-const messages = document.getElementById("messages");
-const promptBox = document.getElementById("prompt");
-const statusBox = document.getElementById("status");
-const sendButton = document.getElementById("send");
-const conversationSelect = document.getElementById("conversationSelect");
-const loadConversationButton = document.getElementById("loadConversation");
-const newChatButton = document.getElementById("newChat");
+HTML = Path(__file__).with_name("dashboard.html").read_text(encoding="utf-8")
 
-function addMessage(text, role) {
-    const div = document.createElement("div");
-    div.className = "message " + role;
-    div.textContent = text;
-    messages.appendChild(div);
-    messages.scrollTop = messages.scrollHeight;
-}
 
-async function refreshConversations(selectedId = "") {
-    const response = await fetch("/api/conversations");
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Could not load conversations");
+def _conversation_summaries():
+    summaries = []
+    for conversation_id, history in conversations.load_conversations().items():
+        last_prompt = next(
+            (
+                message.get("content", "")
+                for message in reversed(history)
+                if message.get("role") == "user"
+            ),
+            "",
+        )
+        label = " ".join(last_prompt.split())[:60] or conversation_id
+        summaries.append({"id": conversation_id, "label": label})
+    return summaries
 
-    conversationSelect.replaceChildren();
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = "Select a conversation";
-    conversationSelect.appendChild(placeholder);
 
-    for (const conversation of data.conversations) {
-        const option = document.createElement("option");
-        option.value = conversation.id;
-        option.textContent = conversation.label;
-        conversationSelect.appendChild(option);
-    }
-
-    conversationSelect.value = selectedId;
-}
-
-refreshConversations().catch(() => {
-    statusBox.textContent = "Could not load saved conversations";
-});
-
-newChatButton.addEventListener("click", () => {
-    conversationId = null;
-    conversationSelect.value = "";
-    messages.innerHTML = "";
-    addMessage("New conversation started. What would you like to discuss?", "assistant");
-    statusBox.textContent = "New conversation";
-    promptBox.focus();
-});
-
-loadConversationButton.addEventListener("click", async () => {
-    const selectedId = conversationSelect.value;
-    if (!selectedId) return;
-
-    loadConversationButton.disabled = true;
-    sendButton.disabled = true;
-    newChatButton.disabled = true;
-    statusBox.textContent = "Loading conversation...";
-    try {
-        const response = await fetch("/api/conversations/" + encodeURIComponent(selectedId));
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Could not load conversation");
-
-        conversationId = data.id;
-        messages.innerHTML = "";
-        for (const message of data.history) {
-            if (message.role === "user" || message.role === "assistant") {
-                addMessage(message.content, message.role);
-            }
-        }
-        statusBox.textContent = "Conversation loaded";
-    } catch (error) {
-        statusBox.textContent = "Error: " + error.message;
-    } finally {
-        loadConversationButton.disabled = false;
-        sendButton.disabled = false;
-        newChatButton.disabled = false;
-    }
-});
-
-document.getElementById("chatForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const prompt = promptBox.value.trim();
-    if (!prompt) return;
-
-    addMessage(prompt, "user");
-    promptBox.value = "";
-    sendButton.disabled = true;
-    loadConversationButton.disabled = true;
-    newChatButton.disabled = true;
-    statusBox.textContent = "Thinking...";
-
-    try {
-        const response = await fetch("/api/chat", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({
-                prompt: prompt,
-                conversation_id: conversationId
-            })
-        });
-
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Request failed");
-
-        conversationId = data.conversation_id;
-        addMessage(data.response, "assistant");
-        statusBox.textContent = "Ready";
-        refreshConversations(conversationId).catch(() => {});
-    } catch (error) {
-        addMessage("Error: " + error.message, "assistant");
-        statusBox.textContent = "Something went wrong";
-    } finally {
-        sendButton.disabled = false;
-        loadConversationButton.disabled = false;
-        newChatButton.disabled = false;
-        promptBox.focus();
-    }
-});
-
-promptBox.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        document.getElementById("chatForm").requestSubmit();
-    }
-});
-</script>
-</body>
-</html>
-"""
+def _read_json_body(handler):
+    length = int(handler.headers.get("Content-Length", "0"))
+    if length <= 0 or length > 100000:
+        raise ValueError("Invalid request size")
+    data = json.loads(handler.rfile.read(length))
+    if not isinstance(data, dict):
+        raise ValueError("Request body must be a JSON object")
+    return data
 
 
 class ChatHandler(BaseHTTPRequestHandler):
@@ -283,22 +46,38 @@ class ChatHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        path = self.path.split("?", 1)[0]
+        parsed_path = urlsplit(self.path)
+        path = parsed_path.path
+
+        if path == "/api/dashboard":
+            self.send_json({
+                "conversations": _conversation_summaries(),
+                "task_overview": tasks.task_overview(),
+                "tasks": tasks.list_tasks(include_completed=True),
+                "goals": goals.list_goals(),
+                "memories": [dict(zip(("id", "content", "created_at"), row))
+                             for row in memory.get_memories()],
+            })
+            return
+
+        if path == "/api/tasks":
+            self.send_json({"tasks": tasks.list_tasks(include_completed=True)})
+            return
+
+        if path == "/api/goals":
+            self.send_json({"goals": goals.list_goals()})
+            return
+
+        if path == "/api/memories":
+            query = parse_qs(parsed_path.query).get("q", [""])[0].strip()
+            records = memory.search_memories(query) if query else memory.get_memories()
+            self.send_json({"memories": [dict(zip(
+                ("id", "content", "created_at"), row
+            )) for row in records]})
+            return
 
         if path == "/api/conversations":
-            summaries = []
-            for conversation_id, history in conversations.load_conversations().items():
-                last_prompt = next(
-                    (
-                        message.get("content", "")
-                        for message in reversed(history)
-                        if message.get("role") == "user"
-                    ),
-                    "",
-                )
-                label = " ".join(last_prompt.split())[:60] or conversation_id
-                summaries.append({"id": conversation_id, "label": label})
-            self.send_json({"conversations": summaries})
+            self.send_json({"conversations": _conversation_summaries()})
             return
 
         conversation_prefix = "/api/conversations/"
@@ -329,17 +108,83 @@ class ChatHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        if self.path != "/api/chat":
+        path = urlsplit(self.path).path
+        if path not in ("/api/chat", "/api/goals", "/api/tasks", "/api/memories") and not (
+            path.startswith("/api/goals/")
+            or path.startswith("/api/tasks/")
+            or path.startswith("/api/memories/")
+        ):
             self.send_json({"error": "Not found"}, 404)
             return
 
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            if length <= 0 or length > 100000:
-                self.send_json({"error": "Invalid request size"}, 400)
+        if path != "/api/chat":
+            try:
+                data = _read_json_body(self)
+                if path == "/api/goals":
+                    goal_id = goals.add_goal(data.get("title"), data.get("details", ""))
+                    goal = next(goal for goal in goals.list_goals() if goal["id"] == goal_id)
+                    self.send_json({"goal": goal}, 201)
+                    return
+
+                if path.startswith("/api/goals/"):
+                    parts = path.strip("/").split("/")
+                    if len(parts) != 4 or parts[3] != "status":
+                        self.send_json({"error": "Not found"}, 404)
+                        return
+                    updated = goals.set_goal_status(int(parts[2]), data.get("status"))
+                    if not updated:
+                        self.send_json({"error": "Goal not found"}, 404)
+                        return
+                    self.send_json({"ok": True})
+                    return
+
+                if path == "/api/tasks":
+                    task_id = tasks.add_task(data.get("title"), data.get("due_date"))
+                    task = next(task for task in tasks.list_tasks(True) if task["id"] == task_id)
+                    self.send_json({"task": task}, 201)
+                    return
+
+                if path.startswith("/api/tasks/"):
+                    parts = path.strip("/").split("/")
+                    if len(parts) != 4 or parts[3] != "complete":
+                        self.send_json({"error": "Not found"}, 404)
+                        return
+                    if not tasks.complete_task(int(parts[2])):
+                        self.send_json({"error": "Open task not found"}, 404)
+                        return
+                    self.send_json({"ok": True})
+                    return
+
+                if path == "/api/memories":
+                    content = data.get("content")
+                    if not isinstance(content, str) or not content.strip():
+                        raise ValueError("Memory cannot be empty.")
+                    memory_id = memory.save_memory(content.strip())
+                    record = next(row for row in memory.get_memories() if row[0] == memory_id)
+                    self.send_json({"memory": dict(zip(
+                        ("id", "content", "created_at"), record
+                    ))}, 201)
+                    return
+
+                if path.startswith("/api/memories/"):
+                    parts = path.strip("/").split("/")
+                    if len(parts) != 4 or parts[3] != "delete":
+                        self.send_json({"error": "Not found"}, 404)
+                        return
+                    if not memory.delete_memory(int(parts[2])):
+                        self.send_json({"error": "Memory not found"}, 404)
+                        return
+                    self.send_json({"ok": True})
+                    return
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                self.send_json({"error": str(error)}, 400)
+                return
+            except Exception as error:
+                self.send_json({"error": str(error)}, 500)
                 return
 
-            data = json.loads(self.rfile.read(length))
+        try:
+            data = _read_json_body(self)
             prompt = data.get("prompt", "").strip()
             conversation_id = data.get("conversation_id") or None
 
