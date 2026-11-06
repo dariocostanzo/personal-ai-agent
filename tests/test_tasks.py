@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 from datetime import date
 
-from src.agent import tasks
+from src.agent import agent_state, tasks
 from src.agent.ai import (
     OllamaAIProvider,
     _run_task_command,
@@ -18,6 +18,11 @@ class TaskStorageTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         patcher = patch.object(tasks, "DB_PATH", Path(temp.name) / "tasks.db")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(
+            agent_state, "DB_PATH", Path(temp.name) / "agent_state.db"
+        )
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -81,6 +86,15 @@ class TaskStorageTests(unittest.TestCase):
     def test_missing_task_is_not_completed(self):
         self.assertFalse(tasks.complete_task(999))
 
+    def test_ignore_task_is_a_distinct_terminal_action(self):
+        task_id = tasks.add_task("Read an article about science")
+        self.assertTrue(tasks.ignore_task(task_id))
+        task = tasks.list_tasks(include_completed=True)[0]
+        self.assertEqual(task["status"], "ignored")
+        self.assertTrue(task["ignored_at"])
+        self.assertIsNone(task["completed_at"])
+        self.assertFalse(tasks.ignore_task(task_id))
+
     def test_search_is_case_insensitive_and_treats_wildcards_literally(self):
         tasks.add_task("Pay rent")
         tasks.add_task("Pay 100% of bill")
@@ -139,6 +153,9 @@ class TaskCommandTests(unittest.TestCase):
         self.assertEqual(_task_command_from_prompt("List my tasks"), ("list",))
         self.assertEqual(
             _task_command_from_prompt("Complete task #4"), ("complete", 4)
+        )
+        self.assertEqual(
+            _task_command_from_prompt("Ignore task #4"), ("ignore", 4)
         )
         self.assertEqual(
             _task_command_from_prompt("What should I do today?"), ("overview",)

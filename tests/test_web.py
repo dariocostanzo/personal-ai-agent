@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.agent import conversations, goals, memory, recommendations, sessions, tasks
+from src.agent import agent_state, news, conversations, goals, memory, recommendations, sessions, tasks
 from src.agent.web import ChatHandler
 
 
@@ -44,6 +44,7 @@ class TestWebHandler(unittest.TestCase):
     def setUp(self):
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
+        self.temp_path = Path(temp_dir.name)
         patcher = patch.object(
             conversations,
             "CONVERSATIONS_FILE",
@@ -51,7 +52,7 @@ class TestWebHandler(unittest.TestCase):
         )
         patcher.start()
         self.addCleanup(patcher.stop)
-        for module in (goals, memory, recommendations, sessions, tasks):
+        for module in (agent_state, news, goals, memory, recommendations, sessions, tasks):
             patcher = patch.object(module, "DB_PATH", Path(temp_dir.name) / f"{module.__name__}.db")
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -92,6 +93,41 @@ class TestWebHandler(unittest.TestCase):
         self.assertEqual(payload["tasks"][0]["title"], "Book a checkup")
         self.assertEqual(payload["memories"][0]["content"], "I prefer morning appointments")
 
+    def test_news_source_refresh_and_feedback_api(self):
+        source_folder = self.temp_path / "press"
+        source_folder.mkdir()
+        (source_folder / "article.txt").write_text(
+            "A science research project publishes a new result.\n"
+            "The local team describes its research.", encoding="utf-8"
+        )
+        response = self.post("/api/news/sources", {
+            "name": "Press review", "kind": "folder", "location": str(source_folder),
+        })
+        self.assertEqual(response.status, 201)
+        with patch("src.agent.news._embedding", return_value=None):
+            refreshed = self.post("/api/news/refresh", {})
+        self.assertEqual(refreshed.status, 202)
+        payload = json.loads(self.get("/api/news").wfile.getvalue().decode("utf-8"))
+        self.assertEqual(len(payload["items"]), 1)
+        item_id = payload["items"][0]["id"]
+        feedback = self.post(f"/api/news/{item_id}/feedback", {
+            "action": "not_interested",
+        })
+        self.assertEqual(feedback.status, 200)
+
+    def test_suggested_improvements_are_returned_for_review(self):
+        suggested = [{
+            "id": 1, "kind": "assistant_prompt", "title": "Clarify recommendations",
+            "details": "Ask a brief follow-up.", "payload": {"prompt": "Ask a follow-up."},
+            "status": "pending",
+        }]
+        with patch("src.agent.proposals.suggest", return_value=suggested):
+            response = self.post("/api/proposals/suggest", {})
+
+        payload = json.loads(response.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(response.status, 201)
+        self.assertEqual(payload["proposals"], suggested)
+
     def test_dashboard_actions_create_and_update_records(self):
         goal_response = self.post("/api/goals", {"title": "Learn to cook", "details": "One meal a week"})
         goal = json.loads(goal_response.wfile.getvalue().decode("utf-8"))["goal"]
@@ -124,6 +160,13 @@ class TestWebHandler(unittest.TestCase):
         complete_response = self.post(f"/api/tasks/{task['id']}/complete", {})
         self.assertEqual(complete_response.status, 200)
         self.assertEqual(tasks.list_tasks(include_completed=True)[0]["status"], "completed")
+        ignored_id = tasks.add_task("Archive old reminder")
+        ignore_response = self.post(f"/api/tasks/{ignored_id}/ignore", {})
+        self.assertEqual(ignore_response.status, 200)
+        self.assertEqual(
+            next(item for item in tasks.list_tasks(True) if item["id"] == ignored_id)["status"],
+            "ignored",
+        )
 
         memory_response = self.post("/api/memories", {"content": "Keep the recipe simple"})
         saved = json.loads(memory_response.wfile.getvalue().decode("utf-8"))["memory"]

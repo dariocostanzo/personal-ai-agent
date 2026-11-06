@@ -19,14 +19,41 @@ def _connect():
             due_date TEXT,
             goal_id INTEGER,
             status TEXT NOT NULL DEFAULT 'open'
-                CHECK (status IN ('open', 'completed')),
+                CHECK (status IN ('open', 'completed', 'ignored')),
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            completed_at TEXT
+            completed_at TEXT,
+            ignored_at TEXT
         )
     """)
     columns = {row[1] for row in connection.execute("PRAGMA table_info(tasks)")}
     if "goal_id" not in columns:
         connection.execute("ALTER TABLE tasks ADD COLUMN goal_id INTEGER")
+    if "ignored_at" not in columns:
+        connection.execute("ALTER TABLE tasks ADD COLUMN ignored_at TEXT")
+    schema = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'"
+    ).fetchone()[0]
+    if "'ignored'" not in schema:
+        connection.execute("ALTER TABLE tasks RENAME TO tasks_before_ignore")
+        connection.execute("""
+            CREATE TABLE tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                due_date TEXT,
+                goal_id INTEGER,
+                status TEXT NOT NULL DEFAULT 'open'
+                    CHECK (status IN ('open', 'completed', 'ignored')),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                completed_at TEXT,
+                ignored_at TEXT
+            )
+        """)
+        connection.execute(
+            "INSERT INTO tasks (id, title, due_date, goal_id, status, created_at, "
+            "completed_at, ignored_at) SELECT id, title, due_date, goal_id, status, "
+            "created_at, completed_at, ignored_at FROM tasks_before_ignore"
+        )
+        connection.execute("DROP TABLE tasks_before_ignore")
     return connection
 
 
@@ -78,12 +105,12 @@ def list_tasks(include_completed=False):
     try:
         if include_completed:
             rows = connection.execute(
-                "SELECT id, title, due_date, goal_id, status, created_at, completed_at "
+                "SELECT id, title, due_date, goal_id, status, created_at, completed_at, ignored_at "
                 "FROM tasks ORDER BY status, due_date IS NULL, due_date, id"
             ).fetchall()
         else:
             rows = connection.execute(
-                "SELECT id, title, due_date, goal_id, status, created_at, completed_at "
+                "SELECT id, title, due_date, goal_id, status, created_at, completed_at, ignored_at "
                 "FROM tasks WHERE status = 'open' "
                 "ORDER BY due_date IS NULL, due_date, id"
             ).fetchall()
@@ -101,7 +128,7 @@ def search_tasks(query, include_completed=False):
     try:
         status_filter = "" if include_completed else "AND status = 'open'"
         rows = connection.execute(
-            "SELECT id, title, due_date, goal_id, status, created_at, completed_at "
+            "SELECT id, title, due_date, goal_id, status, created_at, completed_at, ignored_at "
             "FROM tasks WHERE title LIKE ? ESCAPE '\\' " + status_filter +
             " ORDER BY due_date IS NULL, due_date, id",
             (f"%{escaped}%",),
@@ -177,8 +204,13 @@ def task_overview(today=None, days=7):
 
 
 def complete_task(task_id):
+    task = None
     connection = _connect()
     try:
+        row = connection.execute(
+            "SELECT title FROM tasks WHERE id = ? AND status = 'open'", (task_id,)
+        ).fetchone()
+        task = row["title"] if row else None
         cursor = connection.execute(
             "UPDATE tasks SET status = 'completed', "
             "completed_at = CURRENT_TIMESTAMP "
@@ -186,6 +218,34 @@ def complete_task(task_id):
             (task_id,),
         )
         connection.commit()
-        return cursor.rowcount > 0
+        changed = cursor.rowcount > 0
     finally:
         connection.close()
+    if changed and task is not None:
+        from src.agent.interests import record_action
+        record_action("task_completed", task, "task", task_id,
+                      "Task was explicitly marked complete.")
+    return changed
+
+
+def ignore_task(task_id):
+    connection = _connect()
+    try:
+        row = connection.execute(
+            "SELECT title FROM tasks WHERE id = ? AND status = 'open'", (task_id,)
+        ).fetchone()
+        title = row["title"] if row else None
+        cursor = connection.execute(
+            "UPDATE tasks SET status = 'ignored', ignored_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'open'",
+            (task_id,),
+        )
+        connection.commit()
+        changed = cursor.rowcount > 0
+    finally:
+        connection.close()
+    if changed and title is not None:
+        from src.agent.interests import record_action
+        record_action("task_ignored", title, "task", task_id,
+                      "Task was explicitly marked ignored.")
+    return changed

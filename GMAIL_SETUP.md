@@ -7,7 +7,7 @@ each body is limited to 3,000 characters. Fetched mail is sent to local Ollama.
 1. In Google Cloud Console, create or select a project and enable Gmail API.
 2. Configure the OAuth consent screen. For a personal Gmail account, choose External and add your own Google account as a test user.
 3. Create an OAuth client ID with application type Desktop app and download its JSON.
-4. In WSL save the file as ~/projects/personal-agent/data/gmail-credentials.json.
+4. Save the file in this clone as `data/gmail-credentials.json`.
 5. From the project directory activate .venv and run:
    python -m pip install -r requirements.txt
    python -m src.agent.gmail authorize
@@ -23,3 +23,6 @@ Chat examples:
 - Search my Gmail for subject:invoice
 - Check my unread emails
 - Check my inbox
+
+Results are prioritized using urgency cues and the local Interest Graph, and may
+be linked to active goals. A search interaction updates the graph locally.

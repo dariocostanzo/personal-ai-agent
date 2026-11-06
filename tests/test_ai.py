@@ -1,8 +1,10 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from src.agent import ai
+from src.agent import agent_state, ai
 
 
 class FakeResponse:
@@ -20,6 +22,13 @@ class FakeResponse:
 
 
 class TestGoalAwareChat(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        patcher = patch.object(agent_state, "DB_PATH", Path(temp.name) / "agent_state.db")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_goal_question_uses_local_data_without_ollama(self):
         goal = {"id": 4, "title": "Build a routine", "details": "Walk every day"}
         task = {"id": 2, "title": "Walk after lunch", "goal_id": 4}
@@ -69,6 +78,19 @@ class TestGoalAwareChat(unittest.TestCase):
 
         self.assertTrue(status["connected"])
         self.assertTrue(status["model_available"])
+
+    def test_capability_router_includes_gmail_calendar_and_news_tools(self):
+        self.assertIn("gmail", ai.ROUTER.capabilities)
+        self.assertIn("calendar", ai.ROUTER.capabilities)
+        self.assertIn("news", ai.ROUTER.capabilities)
+        self.assertEqual(
+            ai._calendar_command_from_prompt("What is on my calendar?"),
+            ("list",),
+        )
+        self.assertEqual(
+            ai._gmail_command_from_prompt("Check my unread emails"),
+            ("search", "in:inbox is:unread"),
+        )
 
 
 if __name__ == "__main__":

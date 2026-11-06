@@ -59,6 +59,8 @@ def _record(message):
         except (LookupError, UnicodeError, ValueError):
             headers[name] = header.get("value", "")
     return {
+        "id": message.get("id", ""),
+        "thread_id": message.get("threadId", ""),
         "from": headers.get("from", ""),
         "subject": headers.get("subject", "(no subject)"),
         "date": headers.get("date", ""),
@@ -112,6 +114,52 @@ def search_messages(query, max_results=MAX_RESULTS):
     result = api.list(userId="me", q=query.strip(), maxResults=limit).execute()
     return [_record(api.get(userId="me", id=m["id"], format="full").execute())
             for m in result.get("messages", [])[:limit]]
+
+
+def prioritize_messages(messages):
+    """Rank already-fetched mail using urgency cues and the local interest graph."""
+    from src.agent import agent_state, goals, interests
+
+    nodes = {
+        item["topic"]: item["weight"]
+        for item in interests.list_interests()["interests"]
+    }
+    active_goals = goals.list_goals(include_completed=False)
+    ranked = []
+    for message in messages:
+        text = f"{message.get('subject', '')} {message.get('snippet', '')} {message.get('body', '')}"
+        lower = text.casefold()
+        topics = interests.classify_topics(text)
+        urgency = sum(term in lower for term in (
+            "urgent", "action required", "deadline", "due today", "asap",
+        ))
+        relevance = sum(nodes.get(topic, 0.5) for topic in topics) / len(topics)
+        score = urgency * 0.2 + relevance * 0.5
+        matching_goals = [
+            goal["title"] for goal in active_goals
+            if any(word in (goal["title"] + " " + goal["details"]).casefold()
+                   for word in lower.split() if len(word) > 4)
+        ][:3]
+        item = dict(message)
+        item.update({
+            "priority": "high" if score >= 0.75 else "normal",
+            "priority_score": round(score, 3),
+            "topics": topics,
+            "matching_goals": matching_goals,
+        })
+        ranked.append(item)
+        if item.get("id"):
+            interests.record_action(
+                "email_interaction", text, "email", item["id"],
+                "Email appeared in an explicitly requested Gmail search.",
+            )
+        agent_state.add_decision(
+            "email_triage", item.get("subject", "(no subject)"),
+            "Ranked from urgency language and local interest weights.",
+            {"priority": item["priority"], "topics": topics,
+             "matching_goals": matching_goals},
+        )
+    return sorted(ranked, key=lambda item: (-item["priority_score"], item.get("date", "")))
 
 
 def main():

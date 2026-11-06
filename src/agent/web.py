@@ -3,9 +3,23 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from src.agent import conversations, goals, memory, recommendations, sessions, tasks
+from src.agent import (
+    agent_state,
+    calendar,
+    conversations,
+    goals,
+    guardians,
+    interests,
+    memory,
+    news,
+    proposals,
+    recommendations,
+    sessions,
+    tasks,
+)
 
 from src.agent.ai import OllamaAIProvider, get_ollama_status
+from src.agent.providers import status as provider_status
 
 HTML = Path(__file__).with_name("dashboard.html").read_text(encoding="utf-8")
 
@@ -68,7 +82,59 @@ class ChatHandler(BaseHTTPRequestHandler):
                 "recommendations": recommendations.list_recommendations(),
                 "memories": [dict(zip(("id", "content", "created_at"), row))
                              for row in memory.get_memories()],
+                "news": news.list_items(),
+                "news_sources": news.list_sources(),
+                "news_run": news.latest_run(),
+                "interests": interests.list_interests(),
+                "guardians": agent_state.latest_guardian_checks(),
+                "proposals": proposals.list_proposals(),
+                "decisions": agent_state.list_decisions(),
+                "model_usage": agent_state.usage_summary(),
+                "provider": provider_status(),
+                "calendar": calendar.list_events(),
             })
+            return
+
+        if path == "/api/news":
+            topic = parse_qs(parsed_path.query).get("topic", [""])[0].strip() or None
+            self.send_json({
+                "items": news.list_items(topic=topic),
+                "sources": news.list_sources(),
+                "last_run": news.latest_run(),
+            })
+            return
+
+        if path == "/api/interests":
+            self.send_json(interests.list_interests())
+            return
+
+        if path == "/api/guardians":
+            checks = agent_state.latest_guardian_checks()
+            self.send_json({
+                "checks": checks,
+                "needs_attention": any(
+                    item["status"] == "attention" for item in checks
+                ),
+            })
+            return
+
+        if path == "/api/proposals":
+            self.send_json({"proposals": proposals.list_proposals()})
+            return
+
+        if path == "/api/decisions":
+            self.send_json({"decisions": agent_state.list_decisions()})
+            return
+
+        if path == "/api/model/usage":
+            self.send_json({
+                "usage": agent_state.usage_summary(),
+                "provider": provider_status(),
+            })
+            return
+
+        if path == "/api/calendar":
+            self.send_json({"events": calendar.list_events()})
             return
 
         if path == "/api/tasks":
@@ -137,13 +203,17 @@ class ChatHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path not in (
             "/api/chat", "/api/goals", "/api/tasks", "/api/memories",
-            "/api/recommendations",
+            "/api/recommendations", "/api/news/sources", "/api/news/refresh",
+            "/api/proposals", "/api/proposals/suggest", "/api/guardians",
         ) and not (
             path.startswith("/api/goals/")
             or path.startswith("/api/tasks/")
             or path.startswith("/api/memories/")
             or path.startswith("/api/recommendations/")
             or path.startswith("/api/conversations/")
+            or path.startswith("/api/news/")
+            or path.startswith("/api/interests/")
+            or path.startswith("/api/proposals/")
         ):
             self.send_json({"error": "Not found"}, 404)
             return
@@ -189,6 +259,12 @@ class ChatHandler(BaseHTTPRequestHandler):
                             clear_goal=bool(data.get("clear_goal", False)),
                         )
                         if not changed:
+                            self.send_json({"error": "Open task not found"}, 404)
+                            return
+                        self.send_json({"ok": True})
+                        return
+                    if parts[3] == "ignore":
+                        if not tasks.ignore_task(int(parts[2])):
                             self.send_json({"error": "Open task not found"}, 404)
                             return
                         self.send_json({"ok": True})
@@ -248,6 +324,79 @@ class ChatHandler(BaseHTTPRequestHandler):
                     self.send_json({"ok": True})
                     return
 
+                if path == "/api/news/sources":
+                    source_id = news.add_source(
+                        data.get("name"), data.get("kind"), data.get("location")
+                    )
+                    source = next(item for item in news.list_sources()
+                                  if item["id"] == source_id)
+                    self.send_json({"source": source}, 201)
+                    return
+
+                if path == "/api/news/refresh":
+                    result = news.run_digest(full=bool(data.get("full", False)))
+                    self.send_json(result, 202)
+                    return
+
+                if path.startswith("/api/news/"):
+                    parts = path.strip("/").split("/")
+                    if len(parts) == 4 and parts[2] == "sources" and parts[3].isdigit():
+                        if not news.set_source_enabled(
+                            int(parts[3]), data.get("enabled")
+                        ):
+                            self.send_json({"error": "News source not found"}, 404)
+                            return
+                        self.send_json({"ok": True})
+                        return
+                    if len(parts) == 4 and parts[3] == "feedback":
+                        if not news.feedback(int(parts[2]), data.get("action")):
+                            self.send_json({"error": "News item not found"}, 404)
+                            return
+                        self.send_json({"ok": True})
+                        return
+                    self.send_json({"error": "Not found"}, 404)
+                    return
+
+                if path.startswith("/api/interests/"):
+                    topic = unquote(path[len("/api/interests/"):])
+                    interests.set_interest(topic, data.get("weight"))
+                    self.send_json({"ok": True})
+                    return
+
+                if path == "/api/proposals":
+                    proposal_id = proposals.propose(
+                        data.get("kind"), data.get("title"),
+                        data.get("details", ""), data.get("payload", {}),
+                    )
+                    proposal = next(item for item in proposals.list_proposals()
+                                    if item["id"] == proposal_id)
+                    self.send_json({"proposal": proposal}, 201)
+                    return
+
+                if path == "/api/proposals/suggest":
+                    suggested = proposals.suggest()
+                    self.send_json({"proposals": suggested}, 201)
+                    return
+
+                if path.startswith("/api/proposals/"):
+                    parts = path.strip("/").split("/")
+                    if len(parts) != 4 or parts[3] != "review":
+                        self.send_json({"error": "Not found"}, 404)
+                        return
+                    if not proposals.review(
+                        int(parts[2]), data.get("decision"),
+                        data.get("title"), data.get("details"), data.get("payload"),
+                    ):
+                        self.send_json({"error": "Pending proposal not found"}, 404)
+                        return
+                    self.send_json({"ok": True})
+                    return
+
+                if path == "/api/guardians":
+                    guardians.add_service(data.get("name"), data.get("url"))
+                    self.send_json({"ok": True}, 201)
+                    return
+
                 if path.startswith("/api/conversations/"):
                     parts = path.strip("/").split("/")
                     if len(parts) != 4 or parts[3] not in ("metadata", "attention"):
@@ -305,6 +454,9 @@ class ChatHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    from src.agent.jobs import start_background_jobs
+
+    start_background_jobs()
     server = ThreadingHTTPServer(("127.0.0.1", 8000), ChatHandler)
     print("Personal AI Assistant running at http://localhost:8000")
     print("Press Ctrl+C to stop.")

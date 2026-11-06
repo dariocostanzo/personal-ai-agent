@@ -186,6 +186,25 @@ h2 { margin: 0; font-family: Georgia, serif; font-size: 23px; font-weight: 400; 
 .recommendation-disclaimer { max-width: 620px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .memory-row { align-items: flex-start; }
 .memory-date { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
+.usage-badge { max-width: 230px; color: var(--muted); font-size: 10px; }
+.usage-panel { padding: 14px 16px; border: 1px solid var(--line); background: #ffffffa8; }
+.news-card, .proposal-card, .decision-card, .guardian-card {
+    margin: 12px 0; padding: 16px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--surface); box-shadow: var(--shadow);
+}
+.news-card h3, .proposal-card h3 { margin: 0; font-size: 16px; }
+.news-card p { margin: 8px 0; color: #48584e; line-height: 1.55; }
+.news-meta, .topic-tags { display: flex; flex-wrap: wrap; gap: 7px; color: var(--muted); font-size: 10px; }
+.topic-tag { padding: 3px 8px; border-radius: 99px; background: #e8eee8; color: var(--forest-light); }
+.news-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.interest-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(100px, 2fr) 44px; align-items: center; gap: 14px; padding: 12px 0; border-top: 1px solid var(--line); }
+.interest-row input { width: 100%; accent-color: var(--forest-light); }
+.guardian-card.attention { border-left: 4px solid var(--coral); }
+.guardian-card.healthy { border-left: 4px solid #6f9d6c; }
+.decision-card { box-shadow: none; }
+.decision-card p { margin: 5px 0; }
+.proposal-card .field-area { margin-top: 8px; }
+.proposal-actions { display: flex; gap: 8px; margin-top: 10px; }
 .loading { color: var(--muted); }
 [hidden] { display: none !important; }
 @media (max-width: 900px) {
@@ -226,6 +245,8 @@ h2 { margin: 0; font-family: Georgia, serif; font-size: 23px; font-weight: 400; 
     .calendar-weekday { padding: 6px 2px; font-size: 8px; }
     .calendar-toolbar h2 { min-width: 150px; font-size: 20px; }
     .ollama-badge { font-size: 9px; }
+    .usage-badge { display: none; }
+    .interest-row { grid-template-columns: 90px minmax(60px, 1fr) 38px; gap: 8px; }
 }
 </style>
 </head>
@@ -245,6 +266,11 @@ h2 { margin: 0; font-family: Georgia, serif; font-size: 23px; font-weight: 400; 
             <button class="nav-link" data-view="memories"><span class="nav-glyph" aria-hidden="true">&#9671;</span>Memories</button>
             <button class="nav-link" data-view="goals"><span class="nav-glyph" aria-hidden="true">&#9678;</span>Goals</button>
             <button class="nav-link" data-view="recommendations"><span class="nav-glyph" aria-hidden="true">&#10003;</span>Recs</button>
+            <button class="nav-link" data-view="news"><span class="nav-glyph" aria-hidden="true">&#9672;</span>News</button>
+            <button class="nav-link" data-view="interests"><span class="nav-glyph" aria-hidden="true">&#9670;</span>Interests</button>
+            <button class="nav-link" data-view="guardians"><span class="nav-glyph" aria-hidden="true">&#9673;</span>Guardians</button>
+            <button class="nav-link" data-view="proposals"><span class="nav-glyph" aria-hidden="true">&#9998;</span>Proposals</button>
+            <button class="nav-link" data-view="decisions"><span class="nav-glyph" aria-hidden="true">&#9776;</span>Decisions</button>
         </nav>
         <div class="sidebar-bottom">
             <div class="local-status"><span class="status-dot" aria-hidden="true"></span>Running on this device</div>
@@ -257,6 +283,7 @@ h2 { margin: 0; font-family: Georgia, serif; font-size: 23px; font-weight: 400; 
             <div class="top-actions">
                 <div class="private-badge"><span aria-hidden="true"></span>LOCAL HUB</div>
                 <div class="ollama-badge" id="ollamaBadge" role="status" title="Ollama connection status"><span id="ollamaStatusText">Checking Ollama</span></div>
+                <div class="usage-badge" id="usageMeter" role="status">Local 0 · Cloud 0 tokens</div>
                 <button class="button" id="newSession">New session</button>
             </div>
         </div>
@@ -268,6 +295,7 @@ h2 { margin: 0; font-family: Georgia, serif; font-size: 23px; font-weight: 400; 
                     <div class="date-stamp" id="todayDate"></div>
                 </div>
                 <div class="stats" id="stats"><div class="stat"><span class="stat-value">-</span><span class="stat-label">Open tasks</span></div><div class="stat"><span class="stat-value">-</span><span class="stat-label">Active goals</span></div><div class="stat"><span class="stat-value">-</span><span class="stat-label">Saved memories</span></div><div class="stat"><span class="stat-value">-</span><span class="stat-label">Sessions</span></div></div>
+                <section class="section usage-panel"><div class="section-head"><h2>Local vs Cloud</h2><span class="section-count" id="privacyIndicator">Checking model routing</span></div><p class="row-detail" id="usageSummary">Usage totals are stored locally.</p></section>
                 <div class="overview-grid">
                     <div class="column">
                         <section class="section">
@@ -327,6 +355,7 @@ h2 { margin: 0; font-family: Georgia, serif; font-size: 23px; font-weight: 400; 
                 <div class="page-heading"><div><p class="eyebrow">Deadlines at a glance</p><h1 id="calendarTitle">Calendar</h1><p class="page-subtitle">Tasks with due dates, alongside your week and month.</p></div></div>
                 <div class="calendar-toolbar"><button class="button secondary small" id="previousMonth" aria-label="Previous month">&#8592;</button><h2 id="calendarMonth"></h2><button class="button secondary small" id="nextMonth" aria-label="Next month">&#8594;</button><button class="button secondary small" id="currentMonth">Today</button></div>
                 <div class="calendar-grid" id="calendarGrid" aria-label="Monthly task calendar"></div>
+                <section class="section"><div class="section-head"><h2>Upcoming calendar events</h2><span class="section-count">Read-only local .ics</span></div><div id="calendarEvents"></div></section>
             </div>
         </section>
 
@@ -356,6 +385,52 @@ h2 { margin: 0; font-family: Georgia, serif; font-size: 23px; font-weight: 400; 
                 <form class="page-form stack-form" id="recommendationForm"><h3>Add a recommendation</h3><input class="field" name="title" maxlength="200" placeholder="What is being suggested?" required><textarea class="field-area" name="rationale" maxlength="2000" placeholder="Why might this help?"></textarea><textarea class="field-area" name="evidence" maxlength="2000" placeholder="Evidence or source"></textarea><button class="button" type="submit">Add for review</button></form>
                 <div class="recommendation-list" id="recommendationList"><p class="loading">Loading recommendations...</p></div>
                 <p class="notice" id="recommendationNotice" role="status"></p>
+            </div>
+        </section>
+
+        <section class="view" id="view-news" aria-labelledby="newsTitle">
+            <div class="page">
+                <div class="page-heading"><div><p class="eyebrow">A quieter signal from your sources</p><h1 id="newsTitle">News Digest</h1><p class="page-subtitle">Stories are grouped across sources and tagged with a controlled topic list.</p></div><button class="button" id="refreshNews">Refresh digest</button></div>
+                <div class="form-row"><label for="newsTopic" class="row-meta">Topic</label><select class="field" id="newsTopic"><option value="">All topics</option></select><span class="section-count" id="newsLastRun"></span></div>
+                <div id="newsList"><p class="loading">Loading news...</p></div>
+                <form class="page-form stack-form" id="newsSourceForm"><h3>Add a source</h3><input class="field" name="name" maxlength="160" placeholder="Source name" required><select class="field" name="kind"><option value="rss">RSS / Atom feed</option><option value="website">Website</option><option value="folder">Local folder</option><option value="newsletter">Newsletter folder (.eml)</option></select><input class="field" name="location" placeholder="Feed URL or local folder path" required><button class="button" type="submit">Add source</button></form>
+                <div class="section"><div class="section-head"><h2>Configured sources</h2></div><div id="newsSources"></div></div>
+                <p class="notice" id="newsNotice" role="status"></p>
+            </div>
+        </section>
+
+        <section class="view" id="view-interests" aria-labelledby="interestsTitle">
+            <div class="page">
+                <div class="page-heading"><div><p class="eyebrow">Your preferences, not a black box</p><h1 id="interestsTitle">Interest Graph</h1><p class="page-subtitle">Weights range from 0 to 1. Actions that influenced each topic are shown below.</p></div></div>
+                <div id="interestList"></div>
+                <div class="section"><div class="section-head"><h2>Topic connections</h2></div><div id="interestEdges"></div></div>
+                <div class="section"><div class="section-head"><h2>Recent signals</h2></div><div id="interestEvents"></div></div>
+                <p class="notice" id="interestNotice" role="status"></p>
+            </div>
+        </section>
+
+        <section class="view" id="view-guardians" aria-labelledby="guardiansTitle">
+            <div class="page">
+                <div class="page-heading"><div><p class="eyebrow">Local checks, quiet unless attention is needed</p><h1 id="guardiansTitle">Guardians</h1><p class="page-subtitle">Disk and local-directory health, plus optional HTTP service checks. No shell commands are run.</p></div></div>
+                <div id="guardianList"></div>
+                <form class="page-form stack-form" id="guardianForm"><h3>Add a service check</h3><input class="field" name="name" maxlength="160" placeholder="Service name" required><input class="field" name="url" type="url" placeholder="http://localhost:port/health" required><button class="button" type="submit">Add check</button></form>
+                <p class="notice" id="guardianNotice" role="status"></p>
+            </div>
+        </section>
+
+        <section class="view" id="view-proposals" aria-labelledby="proposalsTitle">
+            <div class="page">
+                <div class="page-heading"><div><p class="eyebrow">Nothing changes without your review</p><h1 id="proposalsTitle">Improvement Proposals</h1><p class="page-subtitle">Acceptance applies only allow-listed changes; edit fields before accepting if needed.</p></div><button class="button" id="suggestProposals">Ask local agent to suggest</button></div>
+                <form class="page-form stack-form" id="proposalForm"><h3>Propose an improvement</h3><select class="field" name="kind"><option value="news_source">Add news source</option><option value="guardian_check">Add Guardian check</option><option value="assistant_prompt">Update assistant guidance</option></select><input class="field" name="title" maxlength="200" placeholder="Proposal title" required><textarea class="field-area" name="details" maxlength="2000" placeholder="Why is this useful?"></textarea><textarea class="field-area" name="payload" placeholder='JSON payload, e.g. {"name":"My feed","kind":"rss","location":"https://example.com/feed.xml"}'>{}</textarea><button class="button" type="submit">Add to review queue</button></form>
+                <div id="proposalList"></div>
+                <p class="notice" id="proposalNotice" role="status"></p>
+            </div>
+        </section>
+
+        <section class="view" id="view-decisions" aria-labelledby="decisionsTitle">
+            <div class="page">
+                <div class="page-heading"><div><p class="eyebrow">The why behind the system</p><h1 id="decisionsTitle">Decision Log</h1><p class="page-subtitle">A local record of prioritization, model routing, feedback, and reviews.</p></div></div>
+                <div id="decisionList"></div>
             </div>
         </section>
     </main>
@@ -407,13 +482,16 @@ function goalMarkup(goal) {
 
 function taskMarkup(task, today, editable = false) {
     const complete = task.status === "completed";
-    const overdue = !complete && task.due_date && task.due_date < today;
+    const ignored = task.status === "ignored";
+    const overdue = !complete && !ignored && task.due_date && task.due_date < today;
     const dueLabel = task.due_date ? (overdue ? "Overdue · " : "Due · ") + task.due_date : "";
     const goal = dashboard?.goals.find((item) => item.id === task.goal_id);
     const goalControl = editable
         ? `<select class="field task-goal-select" data-task-goal="${task.id}" aria-label="Goal for ${escapeHTML(task.title)}"><option value="">No goal</option>${dashboard.goals.filter((item) => item.status === "active").map((item) => `<option value="${item.id}" ${item.id === task.goal_id ? "selected" : ""}>${escapeHTML(item.title)}</option>`).join("")}</select>`
         : goal ? `<span class="row-meta">${escapeHTML(goal.title)}</span>` : "";
-    return `<div class="task-row ${complete ? "completed" : ""}"><input class="task-check" type="checkbox" aria-label="${complete ? "Completed" : "Complete"} ${escapeHTML(task.title)}" data-task-status="${task.id}" ${complete ? "checked disabled" : ""}><div class="row-copy"><p class="row-title">${escapeHTML(task.title)}</p>${goalControl}</div>${dueLabel ? `<span class="task-due ${overdue ? "overdue" : ""}">${escapeHTML(dueLabel)}</span>` : ""}</div>`;
+    const closed = complete || ignored;
+    const ignoreAction = task.status === "open" ? `<button class="text-action" data-ignore-task="${task.id}">Ignore</button>` : "";
+    return `<div class="task-row ${complete ? "completed" : ""} ${ignored ? "ignored" : ""}"><input class="task-check" type="checkbox" aria-label="${closed ? escapeHTML(task.status) : "Complete"} ${escapeHTML(task.title)}" data-task-status="${task.id}" ${complete ? "checked" : ""} ${closed ? "disabled" : ""}><div class="row-copy"><p class="row-title">${escapeHTML(task.title)}</p>${ignored ? `<span class="row-meta">Ignored</span>` : ""}${goalControl}</div>${dueLabel ? `<span class="task-due ${overdue ? "overdue" : ""}">${escapeHTML(dueLabel)}</span>` : ""}${ignoreAction}</div>`;
 }
 
 function populateGoalSelect(id, placeholder, includeCompleted = false) {
@@ -455,6 +533,13 @@ function renderDashboard(data) {
     document.getElementById("goalList").innerHTML = data.goals.length ? data.goals.map(goalMarkup).join("") : emptyMessage("No goals yet. What would you like to move toward?");
     document.getElementById("sessionList").innerHTML = renderSessionGroups(data.conversations);
     document.getElementById("recommendationList").innerHTML = renderRecommendations(data.recommendations);
+    renderNews(data.news, data.news_sources, data.news_run);
+    renderInterests(data.interests);
+    renderGuardians(data.guardians);
+    renderProposals(data.proposals);
+    renderDecisions(data.decisions);
+    renderUsage(data.model_usage, data.provider);
+    renderCalendarEvents(data.calendar);
     renderCalendar(data.tasks);
     renderMemories(data.memories);
 }
@@ -479,6 +564,87 @@ function renderSessionGroups(sessions) {
 function renderRecommendations(items) {
     if (!items.length) return emptyMessage("No recommendations to review yet.");
     return items.map((item) => `<article class="recommendation-item ${item.status}"><div class="section-head"><h3>${escapeHTML(item.title)}</h3><span class="recommendation-status">${escapeHTML(item.status)}</span></div>${item.rationale ? `<p class="row-detail">${escapeHTML(item.rationale)}</p>` : ""}${item.evidence ? `<p class="row-meta">Evidence: ${escapeHTML(item.evidence)}</p>` : ""}${item.status === "pending" ? `<div class="recommendation-actions"><button class="button small" data-recommendation-decision="${item.id}" data-decision="accepted">Accept</button><button class="button secondary small" data-recommendation-decision="${item.id}" data-decision="declined">Decline</button></div>` : `<p class="row-meta">Decision recorded ${escapeHTML(item.decided_at || "")}</p>`}</article>`).join("");
+}
+
+const interestTopics = ["technology", "health", "work", "finance", "science", "politics", "culture", "education", "environment", "local", "general"];
+
+function renderNews(items, sources, lastRun) {
+    const filter = document.getElementById("newsTopic");
+    const selected = filter.value;
+    filter.replaceChildren(new Option("All topics", ""));
+    interestTopics.forEach((topic) => filter.add(new Option(topic, topic)));
+    filter.value = selected;
+    const filtered = (items || []).filter((item) => !filter.value || item.tags.includes(filter.value));
+    const groups = new Map();
+    filtered.forEach((item) => {
+        const key = (item.published_at || item.first_seen_at || "Undated").slice(0, 10);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(item);
+    });
+    document.getElementById("newsList").innerHTML = groups.size ? [...groups].map(([day, stories]) =>
+        `<h2 class="task-group">${escapeHTML(day)}</h2>${stories.map((item) => `<article class="news-card"><div class="section-head"><h3>${escapeHTML(item.title)}</h3><span class="section-count">${escapeHTML(item.published_at || item.first_seen_at || "")}</span></div><p>${escapeHTML(item.summary)}</p><div class="topic-tags">${item.tags.map((tag) => `<span class="topic-tag">${escapeHTML(tag)}</span>`).join("")}<span class="topic-tag">Relevance ${Number(item.relevance_score).toFixed(2)}</span></div><div class="news-meta"><span>Sources: ${escapeHTML(item.sources.join(", ") || "Unknown")}</span><span>Seen ${escapeHTML(item.last_seen_at)}</span></div><div class="news-actions">${item.link ? `<a class="button secondary small" href="${escapeHTML(item.link)}" target="_blank" rel="noopener noreferrer">Open source</a>` : ""}<button class="button secondary small" data-news-feedback="${item.id}" data-action="relevant">More like this</button><button class="button secondary small" data-news-feedback="${item.id}" data-action="not_interested">Not interested</button></div></article>`).join("")}`
+    ).join("") : emptyMessage("No stories yet. Configure a source and refresh the digest.");
+    document.getElementById("newsSources").innerHTML = sources?.length ? sources.map((source) =>
+        `<div class="goal-row"><div class="row-copy"><p class="row-title">${escapeHTML(source.name)}</p><p class="row-meta">${escapeHTML(source.kind)} · ${escapeHTML(source.location)}</p>${source.last_error ? `<p class="row-detail">${escapeHTML(source.last_error)}</p>` : ""}</div><button class="text-action" data-source-toggle="${source.id}" data-enabled="${!source.enabled}">${source.enabled ? "Disable" : "Enable"}</button></div>`
+    ).join("") : emptyMessage("No sources configured.");
+    document.getElementById("newsLastRun").textContent = lastRun ? `Last run ${lastRun.finished_at || lastRun.started_at} · ${lastRun.items_added} new · ${lastRun.error_count} errors` : "No runs yet";
+}
+
+function renderInterests(data) {
+    const values = new Map((data?.interests || []).map((item) => [item.topic, item]));
+    document.getElementById("interestList").innerHTML = interestTopics.map((topic) => {
+        const item = values.get(topic) || {weight: 0.5, source: "learned"};
+        return `<label class="interest-row"><span>${escapeHTML(topic)}</span><input type="range" min="0" max="1" step="0.01" value="${item.weight}" data-interest-weight="${topic}" aria-label="Interest weight for ${topic}"><span>${Number(item.weight).toFixed(2)}</span><small>${escapeHTML(item.source)}</small></label>`;
+    }).join("");
+    const edges = data?.edges || [];
+    document.getElementById("interestEdges").innerHTML = edges.length ? edges.map((edge) =>
+        `<div class="goal-row"><div class="row-copy"><p class="row-title">${escapeHTML(edge.source_topic)} ↔ ${escapeHTML(edge.target_topic)}</p><p class="row-meta">Co-occurred in explicit feedback</p></div><span class="section-count">${Number(edge.strength).toFixed(2)}</span></div>`
+    ).join("") : emptyMessage("Connections appear when an action relates to more than one topic.");
+    const events = data?.recent_events || [];
+    document.getElementById("interestEvents").innerHTML = events.length ? events.map((event) =>
+        `<div class="goal-row"><div class="row-copy"><p class="row-title">${escapeHTML(event.topic)} · ${escapeHTML(event.action)}</p><p class="row-meta">${escapeHTML(event.reason)} · ${escapeHTML(event.created_at)}</p></div><span class="section-count">${event.delta > 0 ? "+" : ""}${event.delta}</span></div>`
+    ).join("") : emptyMessage("Your explicit actions will appear here.");
+}
+
+function renderGuardians(checks) {
+    document.getElementById("guardianList").innerHTML = checks?.length ? checks.map((item) =>
+        `<article class="guardian-card ${item.status}"><div class="section-head"><strong>${escapeHTML(item.name)}</strong><span class="recommendation-status">${escapeHTML(item.status)}</span></div><p class="row-detail">${escapeHTML(item.details)}</p><span class="row-meta">${escapeHTML(item.checked_at)}</span></article>`
+    ).join("") : emptyMessage("No health checks have run yet. The local scheduler starts with the dashboard server.");
+}
+
+function renderProposals(items) {
+    const open = item => `<article class="proposal-card"><div class="section-head"><h3>${escapeHTML(item.title)}</h3><span class="recommendation-status">${escapeHTML(item.status)}</span></div><p class="row-meta">${escapeHTML(item.kind)} · ${escapeHTML(item.details)}</p>${item.status === "pending" ? `<input class="field" data-proposal-title="${item.id}" value="${escapeHTML(item.title)}" aria-label="Edit proposal title"><textarea class="field-area" data-proposal-details="${item.id}" aria-label="Edit proposal details">${escapeHTML(item.details)}</textarea><textarea class="field-area" data-proposal-payload="${item.id}" aria-label="Edit proposal JSON payload">${escapeHTML(JSON.stringify(item.payload, null, 2))}</textarea><div class="proposal-actions"><button class="button small" data-proposal-review="${item.id}" data-decision="accepted">Accept / save edits</button><button class="button secondary small" data-proposal-review="${item.id}" data-decision="rejected">Reject</button></div>` : `<p class="row-meta">Reviewed ${escapeHTML(item.reviewed_at || "")}</p>`}</article>`;
+    document.getElementById("proposalList").innerHTML = items?.length ? items.map(open).join("") : emptyMessage("No improvement proposals yet.");
+}
+
+function renderDecisions(items) {
+    document.getElementById("decisionList").innerHTML = items?.length ? items.map((item) =>
+        `<article class="decision-card"><div class="section-head"><strong>${escapeHTML(item.subject)}</strong><span class="section-count">${escapeHTML(item.created_at)}</span></div><p class="row-title">${escapeHTML(item.action)}</p><p class="row-detail">Why: ${escapeHTML(item.reason)}</p>${item.context && Object.keys(item.context).length ? `<p class="row-meta">${escapeHTML(JSON.stringify(item.context))}</p>` : ""}</article>`
+    ).join("") : emptyMessage("The decision log will appear as the agent takes actions.");
+}
+
+function renderUsage(usage, provider) {
+    const localTokens = (usage?.local?.input_tokens || 0) + (usage?.local?.output_tokens || 0);
+    const cloudTokens = (usage?.cloud?.input_tokens || 0) + (usage?.cloud?.output_tokens || 0);
+    const cloudCost = Number(usage?.cloud?.estimated_cost || 0);
+    const privacy = provider?.locality === "local"
+        ? provider?.cloud_enabled ? "Ollama chat · cloud optional" : "Local-only model routing"
+        : "Cloud provider configured";
+    const costLabel = !cloudTokens ? "no cloud cost" :
+        provider?.cost_rates_configured ? `est. $${cloudCost.toFixed(4)}` : "cloud cost n/a";
+    const meterText = `Local ${localTokens} · Cloud ${cloudTokens} tokens · ${privacy} · ${costLabel}`;
+    document.getElementById("usageMeter").textContent = meterText;
+    document.getElementById("usageMeter").title = "Token estimates are approximate when the provider does not return usage. Cloud costs depend on configured per-token rates.";
+    document.getElementById("usageSummary").textContent = `${meterText}. Cloud requests send their required context to the configured provider; Ollama stays on this device.`;
+    document.getElementById("privacyIndicator").textContent = provider?.locality === "local"
+        ? provider?.cloud_enabled ? "Ollama chat · cloud optional" : "Private · Ollama"
+        : `Cloud · ${provider?.provider || "provider"}`;
+}
+
+function renderCalendarEvents(events) {
+    document.getElementById("calendarEvents").innerHTML = events?.length ? events.map((item) =>
+        `<div class="goal-row"><div class="row-copy"><p class="row-title">${escapeHTML(item.summary)}</p><p class="row-meta">${escapeHTML(item.date)}${item.location ? " · " + escapeHTML(item.location) : ""}${item.related_goals?.length ? " · Goals: " + escapeHTML(item.related_goals.join(", ")) : ""}</p></div></div>`
+    ).join("") : emptyMessage("No upcoming events in the configured local .ics file.");
 }
 
 function renderCalendar(tasks) {
@@ -618,6 +784,10 @@ document.addEventListener("click", async (event) => {
     const goalButton = event.target.closest("[data-goal-status]");
     const memoryButton = event.target.closest("[data-delete-memory]");
     const recommendationButton = event.target.closest("[data-recommendation-decision]");
+    const newsButton = event.target.closest("[data-news-feedback]");
+    const sourceToggle = event.target.closest("[data-source-toggle]");
+    const ignoreButton = event.target.closest("[data-ignore-task]");
+    const proposalButton = event.target.closest("[data-proposal-review]");
     if (session) {
         try { await loadSession(session.dataset.session); }
         catch (error) { showNotice("chatStatus", "Could not load session: " + error.message); }
@@ -647,9 +817,85 @@ document.addEventListener("click", async (event) => {
             showNotice("recommendationNotice", error.message);
         }
     }
+    if (newsButton) {
+        newsButton.disabled = true;
+        try {
+            await sendJSON(`/api/news/${newsButton.dataset.newsFeedback}/feedback`, {
+                action: newsButton.dataset.action,
+            });
+            await refreshDashboard();
+        } catch (error) {
+            newsButton.disabled = false;
+            showNotice("newsNotice", error.message);
+        }
+    }
+    if (sourceToggle) {
+        sourceToggle.disabled = true;
+        try {
+            await sendJSON(`/api/news/sources/${sourceToggle.dataset.sourceToggle}`, {
+                enabled: sourceToggle.dataset.enabled === "true",
+            });
+            await refreshDashboard();
+        } catch (error) {
+            sourceToggle.disabled = false;
+            showNotice("newsNotice", error.message);
+        }
+    }
+    if (ignoreButton) {
+        ignoreButton.disabled = true;
+        try {
+            await sendJSON(`/api/tasks/${ignoreButton.dataset.ignoreTask}/ignore`, {});
+            await refreshDashboard();
+        } catch (error) {
+            ignoreButton.disabled = false;
+            showNotice("taskNotice", error.message);
+        }
+    }
+    if (proposalButton) {
+        proposalButton.disabled = true;
+        const proposalId = proposalButton.dataset.proposalReview;
+        const decision = proposalButton.dataset.decision;
+        const body = {decision};
+        if (decision === "accepted") {
+            body.title = document.querySelector(`[data-proposal-title="${proposalId}"]`).value;
+            body.details = document.querySelector(`[data-proposal-details="${proposalId}"]`).value;
+            try {
+                body.payload = JSON.parse(document.querySelector(`[data-proposal-payload="${proposalId}"]`).value);
+            } catch {
+                proposalButton.disabled = false;
+                showNotice("proposalNotice", "Proposal payload must be valid JSON.");
+                return;
+            }
+        }
+        try {
+            await sendJSON(`/api/proposals/${proposalId}/review`, body);
+            await refreshDashboard();
+        } catch (error) {
+            proposalButton.disabled = false;
+            showNotice("proposalNotice", error.message);
+        }
+    }
 });
 
 document.addEventListener("change", async (event) => {
+    const interest = event.target.closest("[data-interest-weight]");
+    if (interest) {
+        interest.disabled = true;
+        try {
+            await sendJSON(`/api/interests/${interest.dataset.interestWeight}`, {
+                weight: Number(interest.value),
+            });
+            await refreshDashboard();
+        } catch (error) {
+            interest.disabled = false;
+            showNotice("interestNotice", error.message);
+        }
+        return;
+    }
+    if (event.target.id === "newsTopic") {
+        if (dashboard) renderNews(dashboard.news, dashboard.news_sources, dashboard.news_run);
+        return;
+    }
     const goalSelect = event.target.closest("[data-task-goal]");
     if (goalSelect) {
         goalSelect.disabled = true;
@@ -714,6 +960,65 @@ document.getElementById("recommendationForm").addEventListener("submit", async (
         showNotice("recommendationNotice", "Recommendation added for review.");
         await refreshDashboard();
     } catch (error) { showNotice("recommendationNotice", error.message); }
+});
+
+document.getElementById("newsSourceForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form));
+    try {
+        await sendJSON("/api/news/sources", values);
+        form.reset();
+        showNotice("newsNotice", "News source added.");
+        await refreshDashboard();
+    } catch (error) { showNotice("newsNotice", error.message); }
+});
+
+document.getElementById("refreshNews").addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    showNotice("newsNotice", "Refreshing configured sources...");
+    try {
+        const result = await sendJSON("/api/news/refresh", {full: true});
+        showNotice("newsNotice", `Digest refreshed: ${result.items_added} new stories, ${result.error_count} source errors.`);
+        await refreshDashboard();
+    } catch (error) { showNotice("newsNotice", error.message); }
+    finally { event.currentTarget.disabled = false; }
+});
+
+document.getElementById("guardianForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    try {
+        await sendJSON("/api/guardians", Object.fromEntries(new FormData(form)));
+        form.reset();
+        showNotice("guardianNotice", "Service check added; it will run on the next Guardian cycle.");
+        await refreshDashboard();
+    } catch (error) { showNotice("guardianNotice", error.message); }
+});
+
+document.getElementById("proposalForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form));
+    try {
+        values.payload = JSON.parse(values.payload || "{}");
+        await sendJSON("/api/proposals", values);
+        form.reset();
+        form.elements.payload.value = "{}";
+        showNotice("proposalNotice", "Proposal added for review.");
+        await refreshDashboard();
+    } catch (error) { showNotice("proposalNotice", error.message); }
+});
+
+document.getElementById("suggestProposals").addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    showNotice("proposalNotice", "Asking the configured model for safe suggestions...");
+    try {
+        const result = await sendJSON("/api/proposals/suggest", {});
+        showNotice("proposalNotice", `${result.proposals.length} proposal(s) added for your review.`);
+        await refreshDashboard();
+    } catch (error) { showNotice("proposalNotice", error.message); }
+    finally { event.currentTarget.disabled = false; }
 });
 
 document.getElementById("memoryForm").addEventListener("submit", async (event) => {
